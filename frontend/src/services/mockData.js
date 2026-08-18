@@ -1,21 +1,18 @@
 // ===============================
 // Mock Clinic Login Credentials
 // ===============================
-// ⚠️ DEV/MOCK ONLY. A real backend must NEVER let the client compare
-// passwords — this exists purely so ClinicLogin.jsx has something to test
-// against before real JWT + bcrypt auth exists. This whole export must be
-// deleted once real authentication is wired up; it should never reach
-// production even accidentally.
+// ⚠️ DEV/MOCK ONLY — never ship real passwords client-side. Delete once
+// real JWT + bcrypt authentication exists.
 export const mockClinicUser = {
-  email: 'owner@clinic.test',
+  email: 'musharaf@tc.com',
   password: '12345',
   clinicId: 'clinic_1',
   clinicName: 'Sunrise Family Clinic',
-  doctorName: 'Dr. Owner Name',
+  doctorName: 'Dr. Adil Rashid',
   role: 'Owner',
 }
 
-export const mockClinics = [
+export let mockClinics = [
   {
     _id: 'clinic_1',
     name: 'Sunrise Family Clinic',
@@ -62,6 +59,52 @@ export const mockClinics = [
       'Specialized dental and skin care center offering cosmetic and general treatments in a calm, modern setting.',
   },
 ]
+
+// All facility options offerable — used by both the patient-side display
+// and the Clinic Profile editor's checklist.
+export const ALL_FACILITY_OPTIONS = [
+  'Digital Queue',
+  'Online Payment',
+  'Waiting Lounge',
+  'Parking',
+  'Pharmacy',
+  'Wheelchair Access',
+  'AC Waiting Area',
+  'Lab Tests',
+]
+
+// Updates a clinic's public profile (shown on the patient-side ClinicDetail
+// page). Mock/in-memory only — mutates the exported array in place and
+// persists to localStorage so edits survive a refresh. A real backend
+// would be a PUT /api/clinics/:id call instead.
+const CLINIC_PROFILE_STORAGE_KEY = 'clinicQueue_clinicProfiles'
+
+function loadPersistedClinicProfiles() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(CLINIC_PROFILE_STORAGE_KEY))
+    if (!stored) return
+    mockClinics = mockClinics.map((c) => (stored[c._id] ? { ...c, ...stored[c._id] } : c))
+  } catch {
+    // no-op, use defaults
+  }
+}
+loadPersistedClinicProfiles()
+
+export function updateClinicProfile(clinicId, updates) {
+  mockClinics = mockClinics.map((c) => (c._id === clinicId ? { ...c, ...updates } : c))
+  try {
+    const stored = JSON.parse(localStorage.getItem(CLINIC_PROFILE_STORAGE_KEY)) || {}
+    stored[clinicId] = { ...stored[clinicId], ...updates }
+    localStorage.setItem(CLINIC_PROFILE_STORAGE_KEY, JSON.stringify(stored))
+  } catch {
+    // non-critical if storage unavailable
+  }
+  return mockClinics.find((c) => c._id === clinicId)
+}
+
+export function getClinicById(clinicId) {
+  return mockClinics.find((c) => c._id === clinicId) || null
+}
 
 export const mockDoctorsByClinic = {
   clinic_1: {
@@ -169,26 +212,22 @@ export const mockDoctorDetail = {
 // ===============================
 // Appointment store (private — never exported in bulk)
 // ===============================
-// This simulates a server-side appointments table. It is persisted in
-// localStorage (scoped to this browser only) and is ONLY ever accessed
-// through the single-record lookup functions below — never imported and
-// searched directly by a page component. That distinction matters: a page
-// that imports "all appointments" ships every patient's data to every
-// visitor's browser bundle; a page that calls lookupAppointmentByPatientId()
-// only ever receives the one record it asked for, matching how a real
-// GET /api/appointments/lookup/:patientId endpoint would behave.
+// Simulates a server-side appointments table, persisted to localStorage.
+// Regular pages must use the single-record lookup functions. Clinic staff
+// pages (Patients.jsx) use the clinic-scoped listing function, which is a
+// legitimate authorized "view all patients of MY clinic" operation — not
+// the same as a component silently importing raw patient data in bulk.
 
 const STORAGE_KEY = 'clinicQueue_mockAppointments'
 
-// Seed data so "Join Queue with Patient ID" has something to test against
-// on a fresh browser. Only written once, on first read, and only if the
-// store is currently empty — never overwrites real bookings made later.
 const SEED_APPOINTMENTS = {
   'QNO-482731': {
     appointmentId: 'APT101',
     patientId: 'QNO-482731',
-    patientName: 'Test Patient One',
+    patientName: 'Musharaf Tara',
     patientPhone: '6001234567',
+    patientAge: 34,
+    patientGender: 'Male',
     clinicId: 'clinic_1',
     clinicName: 'Sunrise Family Clinic',
     doctorId: 'doc_1',
@@ -196,16 +235,20 @@ const SEED_APPOINTMENTS = {
     appointmentDate: '12 Aug 2026',
     appointmentDay: 'Wednesday',
     session: '8:00 AM - 10:00 AM',
-    tokenNumber: 20,
-    currentToken: 1,
+    tokenNumber: 31,
+    currentToken: 18,
     fee: 500,
     status: 'waiting',
+    bookedBy: 'online',
+    createdAt: Date.now() - 86400000,
   },
   'QNO-482732': {
     appointmentId: 'APT102',
     patientId: 'QNO-482732',
-    patientName: 'Test Patient Two',
+    patientName: 'Aisha Khan',
     patientPhone: '7001234567',
+    patientAge: 28,
+    patientGender: 'Female',
     clinicId: 'clinic_2',
     clinicName: 'CarePlus Multispecialty',
     doctorId: 'doc_3',
@@ -217,23 +260,29 @@ const SEED_APPOINTMENTS = {
     currentToken: 6,
     fee: 700,
     status: 'waiting',
+    bookedBy: 'online',
+    createdAt: Date.now() - 43200000,
   },
   'QNO-482733': {
     appointmentId: 'APT103',
     patientId: 'QNO-482733',
-    patientName: 'Test Patient Three',
+    patientName: 'Bilal Ahmad',
     patientPhone: '6009876543',
-    clinicId: 'clinic_3',
-    clinicName: 'Valley Dental & Skin Center',
-    doctorId: 'doc_5',
-    doctorName: 'Dr. Priya Nair',
+    patientAge: 41,
+    patientGender: 'Male',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_1',
+    doctorName: 'Dr. Adil Rashid',
     appointmentDate: '16 Aug 2026',
     appointmentDay: 'Monday',
     session: '10:00 AM - 12:00 PM',
     tokenNumber: 5,
     currentToken: 5,
-    fee: 450,
+    fee: 500,
     status: 'your_turn',
+    bookedBy: 'receptionist',
+    createdAt: Date.now() - 3600000,
   },
 }
 
@@ -244,8 +293,6 @@ function readStore() {
   } catch {
     // fall through to seeding below
   }
-  // First run on this browser — seed with sample data, indexed by both
-  // patientId and appointmentId so either lookup path works.
   const seeded = {}
   Object.values(SEED_APPOINTMENTS).forEach((appt) => {
     seeded[appt.patientId] = appt
@@ -259,58 +306,12 @@ function writeStore(store) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
   } catch {
-    // localStorage unavailable (e.g. private browsing) — non-critical for mock mode
-  }
-}
-
-// ===============================
-// Per-slot queue counters (persisted)
-// ===============================
-// Tracks how many patients have booked into a specific doctor+day slot.
-// Seeded from that slot's starting `queueLength` in mockDoctorsByClinic
-// the first time it's booked into, then increments with every new booking
-// — so a new token number reflects the "already booked" count shown on
-// DoctorSelect (e.g. a slot showing "12 booked" hands out token 13 next),
-// instead of resetting to 1 on every page reload.
-
-const QUEUE_COUNTER_KEY = 'clinicQueue_slotCounters'
-
-function readQueueCounters() {
-  try {
-    return JSON.parse(localStorage.getItem(QUEUE_COUNTER_KEY)) || {}
-  } catch {
-    return {}
-  }
-}
-
-function writeQueueCounters(counters) {
-  try {
-    localStorage.setItem(QUEUE_COUNTER_KEY, JSON.stringify(counters))
-  } catch {
     // localStorage unavailable — non-critical for mock mode
   }
 }
 
-function nextTokenForSlot(doctorId, day, baseQueueLength) {
-  const counters = readQueueCounters()
-  const key = `${doctorId}_${day}`
-
-  if (counters[key] === undefined) {
-    // First booking into this slot this session — seed from the
-    // doctor's displayed "already booked" count.
-    counters[key] = baseQueueLength ?? 0
-  }
-
-  counters[key] += 1
-  writeQueueCounters(counters)
-  return counters[key]
-}
-
 let mockAppointmentCounter = 1000
 
-// Random Patient ID in the same QNO-###### format as the seed data — NOT
-// derived from the appointment id, so it can't be recomputed/guessed by
-// anyone who knows the appointment id pattern.
 function generatePatientId() {
   const num = Math.floor(100000 + Math.random() * 900000)
   return `QNO-${num}`
@@ -324,29 +325,23 @@ export function createMockAppointment({
   patientAge,
   patientGender,
   purpose,
-  slotDay,
-  slotQueueLength,
+  bookedBy = 'online', // 'online' | 'receptionist'
+  appointmentDate,
+  appointmentDay,
 }) {
   mockAppointmentCounter += 1
   const appointmentId = `appt_${mockAppointmentCounter}`
+  const tokenNumber = mockAppointmentCounter - 1000
   const patientId = generatePatientId()
 
   const doctor = mockDoctorsByClinic[clinicId]?.doctors.find((d) => d._id === doctorId)
-  const clinic = mockClinics.find((c) => c._id === clinicId)
-
-  // Fall back to the doctor's first availability slot if the caller didn't
-  // pass slot info (keeps this backward-compatible with older callers).
-  const fallbackSlot = doctor?.availability?.[0]
-  const day = slotDay || fallbackSlot?.day || 'Unknown'
-  const baseQueueLength = slotQueueLength ?? fallbackSlot?.queueLength ?? 0
-
-  const tokenNumber = nextTokenForSlot(doctorId, day, baseQueueLength)
+  const clinic = getClinicById(clinicId)
 
   const appointment = {
     appointmentId,
     patientId,
     tokenNumber,
-    currentToken: 1, // the doctor's session always starts serving from token 1
+    currentToken: Math.max(1, tokenNumber - 5),
     clinicId,
     clinicName: clinic?.name,
     doctorId,
@@ -358,6 +353,9 @@ export function createMockAppointment({
     purpose,
     fee: doctor?.fee ?? 300,
     status: 'pending_payment',
+    bookedBy,
+    appointmentDate: appointmentDate || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
+    appointmentDay: appointmentDay || new Date().toLocaleDateString('en-US', { weekday: 'long' }),
     createdAt: Date.now(),
   }
 
@@ -369,7 +367,8 @@ export function createMockAppointment({
   return appointment
 }
 
-// Single-record lookups — the only sanctioned way to read appointment data.
+// Single-record lookups — the sanctioned way for patient-facing pages to
+// read appointment data (never the whole store).
 export function lookupAppointmentByPatientId(patientId) {
   if (!patientId) return null
   const store = readStore()
@@ -392,4 +391,22 @@ export function markAppointmentPaid(appointmentId) {
   store[appt.patientId] = appt
   writeStore(store)
   return appt
+}
+
+// Clinic-scoped bulk listing — for authorized clinic staff only (the
+// Patients.jsx page, gated behind ProtectedClinicRoute + login). This is
+// different from a page importing ALL appointments across every clinic;
+// it filters to just the requesting clinic's own records, the way a real
+// GET /api/clinics/:id/appointments endpoint would behave server-side.
+export function getAppointmentsForClinic(clinicId) {
+  const store = readStore()
+  const seen = new Set()
+  const results = []
+  Object.values(store).forEach((appt) => {
+    if (appt.clinicId === clinicId && !seen.has(appt.appointmentId)) {
+      seen.add(appt.appointmentId)
+      results.push(appt)
+    }
+  })
+  return results.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0))
 }

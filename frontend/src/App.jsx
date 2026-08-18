@@ -21,7 +21,11 @@ import ClinicLogin from './pages/clinic/ClinicLogin.jsx'
 import ClinicRegister from './pages/clinic/ClinicRegister.jsx'
 import ClinicDashboard from './pages/clinic/ClinicDashboard.jsx'
 import QueueManagement from './pages/clinic/QueueManagement.jsx'
+import ClinicProfile from './pages/clinic/ClinicProfile.jsx'
+import Appointments from './pages/clinic/Appointments.jsx'
 import ProtectedClinicRoute from './components/clinic/ProtectedClinicRoute.jsx'
+import ClinicDoctors from './pages/clinic/ClinicDoctors.jsx'
+import Patients from './pages/clinic/Patients.jsx'
 
 // About Pages
 import AboutDeveloper from './pages/AboutDeveloper.jsx'
@@ -67,6 +71,31 @@ export default function App() {
                 </ProtectedClinicRoute>
               }
             />
+            <Route
+              path="/clinic/appointments"
+              element={
+                <ProtectedClinicRoute>
+                  <Appointments />
+                </ProtectedClinicRoute>
+              }
+            />
+            <Route
+              path="/clinic/settings"
+              element={
+                <ProtectedClinicRoute>
+                  <ClinicProfile />
+                </ProtectedClinicRoute>
+              }
+            />
+            <Route
+              path="/clinic/doctors"
+              element={
+                <ProtectedClinicRoute>
+                  <ClinicDoctors />
+                </ProtectedClinicRoute>
+              }
+            />
+            <Route path="/clinic/patients" element={<ProtectedClinicRoute><Patients /></ProtectedClinicRoute>} />
 
             {/* About Routes */}
             <Route path="/about-developer" element={<AboutDeveloper />} />
