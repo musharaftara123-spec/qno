@@ -1,9 +1,14 @@
 import React, { useEffect, useState } from 'react'
 import toast from 'react-hot-toast'
-import { Building2, MapPin, Clock3, IndianRupee, Check } from 'lucide-react'
+import { Building2, MapPin, Clock3, IndianRupee, Check, Phone, Mail, FileText } from 'lucide-react'
 import ClinicDashboardLayout from '../../components/clinic/ClinicDashboardLayout.jsx'
 import { useClinicAuth } from '../../contexts/ClinicAuthContext.jsx'
-import { getClinicById, updateClinicProfile, ALL_FACILITY_OPTIONS } from '../../services/mockData.js'
+import {
+  getClinicById,
+  updateClinicProfile,
+  ALL_FACILITY_OPTIONS,
+  CONSULTATION_VALIDITY_OPTIONS,
+} from '../../services/mockData.js'
 
 export default function ClinicProfile() {
   const { user } = useClinicAuth()
@@ -115,6 +120,32 @@ export default function ClinicProfile() {
           </Field>
 
           <div className="grid grid-cols-2 gap-3">
+            <Field label="Phone">
+              <div className="relative">
+                <Phone size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  value={form.phone || ''}
+                  onChange={(e) => update('phone', e.target.value)}
+                  placeholder="01954-220011"
+                  className="w-full h-11 pl-9 pr-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm"
+                />
+              </div>
+            </Field>
+            <Field label="Email">
+              <div className="relative">
+                <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="email"
+                  value={form.email || ''}
+                  onChange={(e) => update('email', e.target.value)}
+                  placeholder="contact@clinic.in"
+                  className="w-full h-11 pl-9 pr-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm"
+                />
+              </div>
+            </Field>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
             <Field label="Timings">
               <div className="relative">
                 <Clock3 size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
@@ -179,6 +210,32 @@ export default function ClinicProfile() {
               )
             })}
           </div>
+        </div>
+
+        <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5 space-y-3">
+          <div className="flex items-center gap-2 mb-1">
+            <FileText size={16} className="text-brand-600 dark:text-brand-400" />
+            <p className="text-sm font-semibold text-gray-800 dark:text-gray-100">
+              Consultation Slip
+            </p>
+          </div>
+          <p className="text-xs text-gray-400 -mt-2">
+            Controls what prints on the doctor's consultation slip from Patients &amp; Appointments — how many visits one printed slip stays valid for.
+          </p>
+
+          <Field label="Slip Validity">
+            <select
+              value={form.consultationValidity ?? 1}
+              onChange={(e) => update('consultationValidity', Number(e.target.value))}
+              className="w-full h-11 px-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm"
+            >
+              {CONSULTATION_VALIDITY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </Field>
         </div>
 
         <button

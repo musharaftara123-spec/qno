@@ -31,6 +31,18 @@ export const mockClinicAccounts = [
   },
 ]
 
+// Canonical weekday order, used to sort a doctor's availability sessions
+// Monday -> Sunday regardless of the order they were entered in.
+export const WEEKDAY_ORDER = [
+  'Monday',
+  'Tuesday',
+  'Wednesday',
+  'Thursday',
+  'Friday',
+  'Saturday',
+  'Sunday',
+]
+
 export const mockClinicQueues = {
   doc_1: {
     doctorName: 'Dr. Adil Rashid',
@@ -99,27 +111,62 @@ export const mockClinicQueues = {
 // Add/remove a doctor here (or via the UI, which mutates a local copy) and
 // it drives the ClinicDoctors page, summary cards, and PDF reports.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// Doctor roster — the source of truth for the Doctors management page.
+// Add/remove a doctor here (or via the UI, which mutates a local copy) and
+// it drives the ClinicDoctors page, summary cards, and PDF reports.
+//
+// `availability` is the day-wise weekly schedule: each entry is one working
+// session for that doctor (a doctor can have more than one session on the
+// same day, e.g. morning + evening). `bookedSlots` simulates how many of
+// that session's `totalSlots` are already taken today, purely for the mock.
+// ---------------------------------------------------------------------------
 export const mockDoctors = [
   {
     id: 'doc_1',
     name: 'Dr. Adil Rashid',
     specialty: 'General Medicine',
+    qualification: 'MBBS, MD',
+    phone: '9906123001',
+    fee: 500,
     active: true,
     totalSlots: 20, // appointment capacity per day
+    availability: [
+      { day: 'Monday', start: '9:00 AM', end: '12:00 PM', totalSlots: 15, bookedSlots: 10 },
+      { day: 'Tuesday', start: '4:00 PM', end: '6:00 PM', totalSlots: 10, bookedSlots: 9 },
+      { day: 'Wednesday', start: '8:00 AM', end: '10:00 AM', totalSlots: 8, bookedSlots: 3 },
+      { day: 'Friday', start: '2:00 PM', end: '5:00 PM', totalSlots: 18, bookedSlots: 14 },
+      { day: 'Saturday', start: '9:00 AM', end: '12:00 PM', totalSlots: 15, bookedSlots: 6 },
+    ],
   },
   {
     id: 'doc_2',
     name: 'Dr. Sana Khan',
     specialty: 'Gynecologist',
+    qualification: 'MBBS, DNB',
+    phone: '9906123002',
+    fee: 600,
     active: true,
     totalSlots: 15,
+    availability: [
+      { day: 'Monday', start: '10:00 AM', end: '1:00 PM', totalSlots: 12, bookedSlots: 5 },
+      { day: 'Thursday', start: '12:00 PM', end: '3:00 PM', totalSlots: 12, bookedSlots: 2 },
+      { day: 'Saturday', start: '4:00 PM', end: '7:00 PM', totalSlots: 10, bookedSlots: 8 },
+    ],
   },
   {
     id: 'doc_3',
     name: 'Dr. Imran Nazir',
     specialty: 'Orthopedic',
+    qualification: 'MBBS, MS',
+    phone: '9906123003',
+    fee: 700,
     active: false,
     totalSlots: 18,
+    availability: [
+      { day: 'Monday', start: '9:00 AM', end: '12:00 PM', totalSlots: 10, bookedSlots: 0 },
+      { day: 'Wednesday', start: '2:00 PM', end: '5:00 PM', totalSlots: 12, bookedSlots: 0 },
+    ],
   },
 ]
 

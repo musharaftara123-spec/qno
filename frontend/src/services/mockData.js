@@ -18,12 +18,18 @@ export let mockClinics = [
     name: 'Sunrise Family Clinic',
     category: 'General Clinic',
     address: '123, Main Street, Sopore, Jammu & Kashmir 193201',
+    phone: '01954-220011',
+    email: 'contact@sunrisefamilyclinic.in',
     isOpen: true,
     rating: 4.6,
     reviewCount: 128,
     distanceKm: 0.6,
     timings: 'Mon - Sat · 9:00 AM - 8:00 PM',
     consultationFee: 500,
+    // How many visits a single printed consultation slip stays valid for
+    // (shown on the slip and used by reception to decide whether a repeat
+    // visit within that window needs a fresh consultation).
+    consultationValidity: 1,
     facilities: ['Digital Queue', 'Online Payment', 'Waiting Lounge', 'Parking'],
     about:
       'Modern clinic with experienced doctors and advanced facilities, offering quick consultations and a comfortable waiting experience.',
@@ -33,12 +39,15 @@ export let mockClinics = [
     name: 'CarePlus Multispecialty',
     category: 'Multispecialty Hospital',
     address: '45, Rajbagh Road, Srinagar, Jammu & Kashmir 190008',
+    phone: '0194-2450022',
+    email: 'info@careplusmultispecialty.in',
     isOpen: true,
     rating: 4.8,
     reviewCount: 342,
     distanceKm: 1.2,
     timings: 'Mon - Sun · 8:00 AM - 9:00 PM',
     consultationFee: 700,
+    consultationValidity: 2,
     facilities: ['Digital Queue', 'Online Payment', 'Pharmacy', 'Parking'],
     about:
       'A full-service multispecialty hospital with cardiology, orthopedics, and emergency care, staffed by senior consultants.',
@@ -48,12 +57,15 @@ export let mockClinics = [
     name: 'Valley Dental & Skin Center',
     category: 'Dental & Dermatology',
     address: '12, Lal Chowk, Srinagar, Jammu & Kashmir 190001',
+    phone: '0194-2478833',
+    email: 'hello@valleydentalskin.in',
     isOpen: false,
     rating: 4.3,
     reviewCount: 76,
     distanceKm: 2.1,
     timings: 'Mon - Sat · 10:00 AM - 6:00 PM',
     consultationFee: 400,
+    consultationValidity: 1,
     facilities: ['Online Payment', 'Waiting Lounge'],
     about:
       'Specialized dental and skin care center offering cosmetic and general treatments in a calm, modern setting.',
@@ -71,6 +83,16 @@ export const ALL_FACILITY_OPTIONS = [
   'Wheelchair Access',
   'AC Waiting Area',
   'Lab Tests',
+]
+
+// Options for the "Consultation Slip Validity" setting in Clinic Profile —
+// how many visits a single printed consultation slip covers before the
+// patient needs a fresh one. Used to populate the dropdown there, and the
+// chosen clinic value is what gets printed on the slip itself.
+export const CONSULTATION_VALIDITY_OPTIONS = [
+  { value: 1, label: '1 Visit' },
+  { value: 2, label: '2 Visits' },
+  { value: 3, label: '3 Visits' },
 ]
 
 // Updates a clinic's public profile (shown on the patient-side ClinicDetail
@@ -220,6 +242,12 @@ export const mockDoctorDetail = {
 
 const STORAGE_KEY = 'clinicQueue_mockAppointments'
 
+// waitTimeMinutes = actual minutes the patient spent in the queue before
+// being seen (checked-in time -> consultation start). Used to compute the
+// "Average Waiting Time" stat on the clinic Patients page.
+const DAY_MS = 86400000
+const HOUR_MS = 3600000
+
 const SEED_APPOINTMENTS = {
   'QNO-482731': {
     appointmentId: 'APT101',
@@ -240,7 +268,8 @@ const SEED_APPOINTMENTS = {
     fee: 500,
     status: 'waiting',
     bookedBy: 'online',
-    createdAt: Date.now() - 86400000,
+    waitTimeMinutes: 22,
+    createdAt: Date.now() - 1 * DAY_MS,
   },
   'QNO-482732': {
     appointmentId: 'APT102',
@@ -261,7 +290,8 @@ const SEED_APPOINTMENTS = {
     fee: 700,
     status: 'waiting',
     bookedBy: 'online',
-    createdAt: Date.now() - 43200000,
+    waitTimeMinutes: 35,
+    createdAt: Date.now() - 12 * HOUR_MS,
   },
   'QNO-482733': {
     appointmentId: 'APT103',
@@ -282,24 +312,389 @@ const SEED_APPOINTMENTS = {
     fee: 500,
     status: 'your_turn',
     bookedBy: 'receptionist',
-    createdAt: Date.now() - 3600000,
+    waitTimeMinutes: 14,
+    createdAt: Date.now() - 1 * HOUR_MS,
+  },
+  // --- Extra seed data below: mostly Sunrise Family Clinic (clinic_1) so
+  // the Patients page (and its Day/Week/Month/Year filter) has enough
+  // realistic records to actually demonstrate each bucket. ---
+  'QNO-500101': {
+    appointmentId: 'APT104',
+    patientId: 'QNO-500101',
+    patientName: 'Rukhsana Bano',
+    patientPhone: '9906123456',
+    patientAge: 52,
+    patientGender: 'Female',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_2',
+    doctorName: 'Dr. Sana Khan',
+    appointmentDate: '18 Aug 2026',
+    appointmentDay: 'Tuesday',
+    session: '10:00 AM - 1:00 PM',
+    tokenNumber: 4,
+    currentToken: 4,
+    fee: 600,
+    status: 'completed',
+    bookedBy: 'online',
+    waitTimeMinutes: 18,
+    createdAt: Date.now() - 3 * HOUR_MS,
+  },
+  'QNO-500102': {
+    appointmentId: 'APT105',
+    patientId: 'QNO-500102',
+    patientName: 'Owais Ahanger',
+    patientPhone: '9797654321',
+    patientAge: 19,
+    patientGender: 'Male',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_1',
+    doctorName: 'Dr. Adil Rashid',
+    appointmentDate: '18 Aug 2026',
+    appointmentDay: 'Tuesday',
+    session: '4:00 PM - 6:00 PM',
+    tokenNumber: 11,
+    currentToken: 9,
+    fee: 500,
+    status: 'waiting',
+    bookedBy: 'receptionist',
+    waitTimeMinutes: 27,
+    createdAt: Date.now() - 30 * 60000,
+  },
+  'QNO-500103': {
+    appointmentId: 'APT106',
+    patientId: 'QNO-500103',
+    patientName: 'Farah Jan',
+    patientPhone: '9622345678',
+    patientAge: 30,
+    patientGender: 'Female',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_2',
+    doctorName: 'Dr. Sana Khan',
+    appointmentDate: '16 Aug 2026',
+    appointmentDay: 'Sunday',
+    session: '4:00 PM - 7:00 PM',
+    tokenNumber: 6,
+    currentToken: 6,
+    fee: 600,
+    status: 'completed',
+    bookedBy: 'online',
+    waitTimeMinutes: 40,
+    createdAt: Date.now() - 2 * DAY_MS,
+  },
+  'QNO-500104': {
+    appointmentId: 'APT107',
+    patientId: 'QNO-500104',
+    patientName: 'Tariq Wani',
+    patientPhone: '9018765432',
+    patientAge: 47,
+    patientGender: 'Male',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_1',
+    doctorName: 'Dr. Adil Rashid',
+    appointmentDate: '14 Aug 2026',
+    appointmentDay: 'Friday',
+    session: '2:00 PM - 5:00 PM',
+    tokenNumber: 22,
+    currentToken: 22,
+    fee: 500,
+    status: 'completed',
+    bookedBy: 'receptionist',
+    waitTimeMinutes: 31,
+    createdAt: Date.now() - 4 * DAY_MS,
+  },
+  'QNO-500105': {
+    appointmentId: 'APT108',
+    patientId: 'QNO-500105',
+    patientName: 'Insha Mir',
+    patientPhone: '9797012345',
+    patientAge: 25,
+    patientGender: 'Female',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_2',
+    doctorName: 'Dr. Sana Khan',
+    appointmentDate: '12 Aug 2026',
+    appointmentDay: 'Wednesday',
+    session: '10:00 AM - 1:00 PM',
+    tokenNumber: 3,
+    currentToken: 3,
+    fee: 600,
+    status: 'completed',
+    bookedBy: 'online',
+    waitTimeMinutes: 9,
+    createdAt: Date.now() - 6 * DAY_MS,
+  },
+  'QNO-500106': {
+    appointmentId: 'APT109',
+    patientId: 'QNO-500106',
+    patientName: 'Sameer Dar',
+    patientPhone: '9622987654',
+    patientAge: 38,
+    patientGender: 'Male',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_1',
+    doctorName: 'Dr. Adil Rashid',
+    appointmentDate: '08 Aug 2026',
+    appointmentDay: 'Saturday',
+    session: '2:00 PM - 5:00 PM',
+    tokenNumber: 15,
+    currentToken: 15,
+    fee: 500,
+    status: 'completed',
+    bookedBy: 'online',
+    waitTimeMinutes: 24,
+    createdAt: Date.now() - 10 * DAY_MS,
+  },
+  'QNO-500107': {
+    appointmentId: 'APT110',
+    patientId: 'QNO-500107',
+    patientName: 'Nusrat Jan',
+    patientPhone: '7006543210',
+    patientAge: 60,
+    patientGender: 'Female',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_2',
+    doctorName: 'Dr. Sana Khan',
+    appointmentDate: '01 Aug 2026',
+    appointmentDay: 'Saturday',
+    session: '4:00 PM - 7:00 PM',
+    tokenNumber: 7,
+    currentToken: 7,
+    fee: 600,
+    status: 'completed',
+    bookedBy: 'receptionist',
+    waitTimeMinutes: 33,
+    createdAt: Date.now() - 17 * DAY_MS,
+  },
+  'QNO-500108': {
+    appointmentId: 'APT111',
+    patientId: 'QNO-500108',
+    patientName: 'Junaid Malik',
+    patientPhone: '9797223344',
+    patientAge: 33,
+    patientGender: 'Male',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_1',
+    doctorName: 'Dr. Adil Rashid',
+    appointmentDate: '25 Jul 2026',
+    appointmentDay: 'Saturday',
+    session: '2:00 PM - 5:00 PM',
+    tokenNumber: 19,
+    currentToken: 19,
+    fee: 500,
+    status: 'completed',
+    bookedBy: 'online',
+    waitTimeMinutes: 20,
+    createdAt: Date.now() - 24 * DAY_MS,
+  },
+  'QNO-500109': {
+    appointmentId: 'APT112',
+    patientId: 'QNO-500109',
+    patientName: 'Shazia Rather',
+    patientPhone: '9018112233',
+    patientAge: 29,
+    patientGender: 'Female',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_2',
+    doctorName: 'Dr. Sana Khan',
+    appointmentDate: '05 Jun 2026',
+    appointmentDay: 'Friday',
+    session: '12:00 PM - 3:00 PM',
+    tokenNumber: 10,
+    currentToken: 10,
+    fee: 600,
+    status: 'completed',
+    bookedBy: 'online',
+    waitTimeMinutes: 16,
+    createdAt: Date.now() - 74 * DAY_MS,
+  },
+  'QNO-500110': {
+    appointmentId: 'APT113',
+    patientId: 'QNO-500110',
+    patientName: 'Waseem Bhat',
+    patientPhone: '9622556677',
+    patientAge: 45,
+    patientGender: 'Male',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_1',
+    doctorName: 'Dr. Adil Rashid',
+    appointmentDate: '20 Apr 2026',
+    appointmentDay: 'Monday',
+    session: '4:00 PM - 6:00 PM',
+    tokenNumber: 14,
+    currentToken: 14,
+    fee: 500,
+    status: 'completed',
+    bookedBy: 'receptionist',
+    waitTimeMinutes: 29,
+    createdAt: Date.now() - 120 * DAY_MS,
+  },
+  'QNO-500111': {
+    appointmentId: 'APT114',
+    patientId: 'QNO-500111',
+    patientName: 'Iqra Fayaz',
+    patientPhone: '7006998877',
+    patientAge: 22,
+    patientGender: 'Female',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_2',
+    doctorName: 'Dr. Sana Khan',
+    appointmentDate: '02 Feb 2026',
+    appointmentDay: 'Monday',
+    session: '10:00 AM - 1:00 PM',
+    tokenNumber: 2,
+    currentToken: 2,
+    fee: 600,
+    status: 'completed',
+    bookedBy: 'online',
+    waitTimeMinutes: 11,
+    createdAt: Date.now() - 197 * DAY_MS,
+  },
+  'QNO-500112': {
+    appointmentId: 'APT115',
+    patientId: 'QNO-500112',
+    patientName: 'Suhail Ganai',
+    patientPhone: '9797445566',
+    patientAge: 55,
+    patientGender: 'Male',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_1',
+    doctorName: 'Dr. Adil Rashid',
+    appointmentDate: '10 Dec 2025',
+    appointmentDay: 'Wednesday',
+    session: '2:00 PM - 5:00 PM',
+    tokenNumber: 27,
+    currentToken: 27,
+    fee: 500,
+    status: 'completed',
+    bookedBy: 'online',
+    waitTimeMinutes: 37,
+    createdAt: Date.now() - 251 * DAY_MS,
+  },
+  'QNO-500113': {
+    appointmentId: 'APT116',
+    patientId: 'QNO-500113',
+    patientName: 'Adeeba Shah',
+    patientPhone: '9018223344',
+    patientAge: 27,
+    patientGender: 'Female',
+    clinicId: 'clinic_1',
+    clinicName: 'Sunrise Family Clinic',
+    doctorId: 'doc_2',
+    doctorName: 'Dr. Sana Khan',
+    appointmentDate: '15 Sep 2025',
+    appointmentDay: 'Monday',
+    session: '12:00 PM - 3:00 PM',
+    tokenNumber: 8,
+    currentToken: 8,
+    fee: 600,
+    status: 'completed',
+    bookedBy: 'receptionist',
+    waitTimeMinutes: 15,
+    createdAt: Date.now() - 337 * DAY_MS,
+  },
+  // A little cross-clinic data too, so filtering isn't 100% Sunrise-only
+  'QNO-500114': {
+    appointmentId: 'APT117',
+    patientId: 'QNO-500114',
+    patientName: 'Zoya Peerzada',
+    patientPhone: '9622778899',
+    patientAge: 31,
+    patientGender: 'Female',
+    clinicId: 'clinic_2',
+    clinicName: 'CarePlus Multispecialty',
+    doctorId: 'doc_4',
+    doctorName: 'Dr. Riya Sharma',
+    appointmentDate: '17 Aug 2026',
+    appointmentDay: 'Monday',
+    session: '2:00 PM - 5:00 PM',
+    tokenNumber: 3,
+    currentToken: 3,
+    fee: 400,
+    status: 'completed',
+    bookedBy: 'online',
+    waitTimeMinutes: 13,
+    createdAt: Date.now() - 1 * DAY_MS - 5 * HOUR_MS,
+  },
+  'QNO-500115': {
+    appointmentId: 'APT118',
+    patientId: 'QNO-500115',
+    patientName: 'Mudasir Lone',
+    patientPhone: '7006334455',
+    patientAge: 36,
+    patientGender: 'Male',
+    clinicId: 'clinic_3',
+    clinicName: 'Valley Dental & Skin Center',
+    doctorId: 'doc_5',
+    doctorName: 'Dr. Priya Nair',
+    appointmentDate: '11 Aug 2026',
+    appointmentDay: 'Tuesday',
+    session: '10:00 AM - 1:00 PM',
+    tokenNumber: 1,
+    currentToken: 1,
+    fee: 450,
+    status: 'completed',
+    bookedBy: 'receptionist',
+    waitTimeMinutes: 8,
+    createdAt: Date.now() - 7 * DAY_MS,
   },
 }
 
+// Estimate a wait time for legacy records that predate the waitTimeMinutes
+// field, so averages never silently show 0 min just because a record is old.
+function estimateWaitMinutes(appt) {
+  const token = appt.tokenNumber || 10
+  const seen = Math.max(1, token - 5)
+  return Math.max(5, Math.round((token - seen) * 4))
+}
+
 function readStore() {
+  let store = null
   try {
-    const existing = JSON.parse(localStorage.getItem(STORAGE_KEY))
-    if (existing) return existing
+    store = JSON.parse(localStorage.getItem(STORAGE_KEY))
   } catch {
-    // fall through to seeding below
+    store = null
   }
-  const seeded = {}
+  if (!store || typeof store !== 'object') store = {}
+
+  // Merge in any seed records the store doesn't already have. This runs
+  // every read (not just on a completely empty store) so that new seed
+  // data added later — like the extra history added for the Patients page
+  // filters — actually shows up for people who already have older mock
+  // data saved in their browser, instead of being silently shadowed by it.
+  let changed = false
   Object.values(SEED_APPOINTMENTS).forEach((appt) => {
-    seeded[appt.patientId] = appt
-    seeded[appt.appointmentId] = appt
+    if (!store[appt.appointmentId]) {
+      store[appt.patientId] = appt
+      store[appt.appointmentId] = appt
+      changed = true
+    }
   })
-  writeStore(seeded)
-  return seeded
+
+  // Backfill wait time on any legacy record (real bookings made before this
+  // field existed, or older seed data) so it contributes to the average
+  // instead of quietly dragging it toward 0.
+  Object.keys(store).forEach((key) => {
+    const appt = store[key]
+    if (appt && typeof appt.waitTimeMinutes !== 'number') {
+      appt.waitTimeMinutes = estimateWaitMinutes(appt)
+      changed = true
+    }
+  })
+
+  if (changed) writeStore(store)
+  return store
 }
 
 function writeStore(store) {
@@ -356,6 +751,9 @@ export function createMockAppointment({
     bookedBy,
     appointmentDate: appointmentDate || new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }),
     appointmentDay: appointmentDay || new Date().toLocaleDateString('en-US', { weekday: 'long' }),
+    // Estimated wait, same idea as a real queue would report: roughly a few
+    // minutes per patient still ahead in the token line.
+    waitTimeMinutes: Math.max(5, Math.round((tokenNumber - Math.max(1, tokenNumber - 5)) * 4)),
     createdAt: Date.now(),
   }
 

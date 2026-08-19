@@ -49,7 +49,7 @@ export default function ClinicLogin() {
       // that's the only built page an Operator is allowed to see anyway —
       // once the full Dashboard exists, Owners will redirect there instead.
       if (user.role === 'owner') {
-        navigate('/clinic/dashboard')
+        navigate('/clinic/queue')
       } else {
         navigate('/clinic/queue')
       }

@@ -22,10 +22,10 @@ import { useClinicAuth } from '../../contexts/ClinicAuthContext.jsx'
 // are owner-only per the role rules.
 const NAV_ITEMS = [
   { to: '/clinic/queue', label: 'Queue Management', icon: ListOrdered, ownerOnly: false },
-  { to: '/clinic/dashboard', label: 'Dashboard', icon: LayoutDashboard, ownerOnly: true },
+  // { to: '/clinic/dashboard', label: 'Dashboard', icon: LayoutDashboard, ownerOnly: true },
   { to: '/clinic/doctors', label: 'Doctors', icon: Stethoscope, ownerOnly: true },
-  { to: '/clinic/appointments', label: 'Appointments', icon: CalendarCheck2, ownerOnly: false },
-  { to: '/clinic/patients', label: 'Patients', icon: Users, ownerOnly: false },
+  { to: '/clinic/appointments', label: 'Appointments', icon: CalendarCheck2, ownerOnly: true },
+  { to: '/clinic/patients', label: 'Patients', icon: Users, ownerOnly: true },
   { to: '/clinic/settings', label: 'Settings', icon: Settings, ownerOnly: true },
 ]
 

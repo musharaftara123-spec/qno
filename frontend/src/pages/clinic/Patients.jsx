@@ -5,8 +5,10 @@ import {
   Globe,
   UserCog,
   IndianRupee,
+  Timer,
 } from 'lucide-react'
 import ClinicDashboardLayout from '../../components/clinic/ClinicDashboardLayout.jsx'
+import PatientQuickActions from '../../components/clinic/PatientQuickActions.jsx'
 import { useClinicAuth } from '../../contexts/ClinicAuthContext.jsx'
 import { mockDoctorsByClinic, getAppointmentsForClinic } from '../../services/mockData.js'
 
@@ -20,42 +22,88 @@ export default function Patients() {
   const [search, setSearch] = useState('')
   const [doctorFilter, setDoctorFilter] = useState('all')
   const [sourceFilter, setSourceFilter] = useState('all')
-  const [yearFilter, setYearFilter] = useState('all')
+  const [periodFilter, setPeriodFilter] = useState('all')
 
-  const availableYears = useMemo(() => {
-    const years = new Set(
-      allAppointments.map((a) => new Date(a.createdAt).getFullYear())
-    )
-    return Array.from(years).sort((a, b) => b - a)
-  }, [allAppointments])
+  const periodOptions = [
+    { value: 'all', label: 'All Time' },
+    { value: 'day', label: 'Today' },
+    { value: 'week', label: 'This Week' },
+    { value: 'month', label: 'This Month' },
+    { value: 'year', label: 'This Year' },
+  ]
+
+  const isInPeriod = (timestamp, period) => {
+    if (period === 'all') return true
+    if (!timestamp) return false
+    const date = new Date(timestamp)
+    const now = new Date()
+
+    if (period === 'day') {
+      return date.toDateString() === now.toDateString()
+    }
+
+    if (period === 'week') {
+      // Week starts on Monday
+      const startOfWeek = new Date(now)
+      const day = (now.getDay() + 6) % 7 // 0 = Monday ... 6 = Sunday
+      startOfWeek.setDate(now.getDate() - day)
+      startOfWeek.setHours(0, 0, 0, 0)
+      const endOfWeek = new Date(startOfWeek)
+      endOfWeek.setDate(startOfWeek.getDate() + 7)
+      return date >= startOfWeek && date < endOfWeek
+    }
+
+    if (period === 'month') {
+      return (
+        date.getFullYear() === now.getFullYear() &&
+        date.getMonth() === now.getMonth()
+      )
+    }
+
+    if (period === 'year') {
+      return date.getFullYear() === now.getFullYear()
+    }
+
+    return true
+  }
 
   const filtered = useMemo(() => {
     const query = search.trim().toLowerCase()
     return allAppointments.filter((a) => {
       if (doctorFilter !== 'all' && a.doctorId !== doctorFilter) return false
       if (sourceFilter !== 'all' && a.bookedBy !== sourceFilter) return false
-      if (
-        yearFilter !== 'all' &&
-        new Date(a.createdAt).getFullYear() !== Number(yearFilter)
-      )
-        return false
+      if (!isInPeriod(a.createdAt, periodFilter)) return false
       if (query) {
-        const haystack = `${a.patientName} ${a.patientPhone} ${a.patientId}`.toLowerCase()
+        const haystack = `${a.patientName} ${a.patientPhone} ${a.patientId} ${a.appointmentDate}`.toLowerCase()
         if (!haystack.includes(query)) return false
       }
       return true
     })
-  }, [allAppointments, doctorFilter, sourceFilter, yearFilter, search])
+  }, [allAppointments, doctorFilter, sourceFilter, periodFilter, search])
 
   const totals = useMemo(() => {
     const totalFees = filtered.reduce((sum, a) => sum + (a.fee || 0), 0)
-    const byDoctor = {}
-    filtered.forEach((a) => {
-      const key = a.doctorName || 'Unknown'
-      byDoctor[key] = (byDoctor[key] || 0) + (a.fee || 0)
-    })
-    return { totalFees, byDoctor, count: filtered.length }
+
+    // Average waiting time = sum of each patient's recorded wait (minutes)
+    // divided by the number of patients that have a wait time recorded.
+    // Only counts records with a real waitTimeMinutes value, so it isn't
+    // skewed by legacy/incomplete records.
+    const withWaitTime = filtered.filter((a) => typeof a.waitTimeMinutes === 'number')
+    const totalWaitMinutes = withWaitTime.reduce((sum, a) => sum + a.waitTimeMinutes, 0)
+    const avgWaitMinutes = withWaitTime.length
+      ? Math.round(totalWaitMinutes / withWaitTime.length)
+      : 0
+
+    return { totalFees, avgWaitMinutes, count: filtered.length }
   }, [filtered])
+
+  const formatWaitTime = (minutes) => {
+    if (!minutes) return '0 min'
+    const hrs = Math.floor(minutes / 60)
+    const mins = minutes % 60
+    if (hrs === 0) return `${mins} min`
+    return `${hrs}h ${mins}m`
+  }
 
   const handleExportPDF = () => {
     window.print()
@@ -105,7 +153,7 @@ export default function Patients() {
         <p className="text-sm text-gray-500">
           Generated {new Date().toLocaleDateString()} ·{' '}
           {doctorFilter === 'all' ? 'All Doctors' : doctors.find((d) => d._id === doctorFilter)?.name} ·{' '}
-          {yearFilter === 'all' ? 'All Years' : yearFilter}
+          {periodOptions.find((p) => p.value === periodFilter)?.label}
         </p>
       </div>
 
@@ -116,7 +164,7 @@ export default function Patients() {
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            placeholder="Search name, phone, Patient ID..."
+            placeholder="Search name, phone, Patient ID, date..."
             className="w-full h-10 pl-9 pr-3 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-sm focus:border-brand-500 focus:outline-none"
           />
         </div>
@@ -145,23 +193,22 @@ export default function Patients() {
         </select>
 
         <select
-          value={yearFilter}
-          onChange={(e) => setYearFilter(e.target.value)}
+          value={periodFilter}
+          onChange={(e) => setPeriodFilter(e.target.value)}
           className="h-10 px-3 rounded-xl bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 text-sm"
         >
-          <option value="all">All Years</option>
-          {availableYears.map((y) => (
-            <option key={y} value={y}>
-              {y}
+          {periodOptions.map((p) => (
+            <option key={p.value} value={p.value}>
+              {p.label}
             </option>
           ))}
         </select>
       </div>
 
       {/* Totals */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
+      <div className="grid grid-cols-2 lg:grid-cols-3 gap-3 mb-4">
         <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-4">
-          <p className="text-xs text-gray-400 mb-1">Records Shown</p>
+          <p className="text-xs text-gray-400 mb-1">Total Patients</p>
           <p className="text-xl font-bold text-gray-900 dark:text-white">{totals.count}</p>
         </div>
         <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-4">
@@ -172,17 +219,14 @@ export default function Patients() {
             ₹{totals.totalFees}
           </p>
         </div>
-        {Object.entries(totals.byDoctor)
-          .slice(0, 2)
-          .map(([doctor, fee]) => (
-            <div
-              key={doctor}
-              className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-4"
-            >
-              <p className="text-xs text-gray-400 mb-1 truncate">{doctor}</p>
-              <p className="text-lg font-bold text-gray-900 dark:text-white">₹{fee}</p>
-            </div>
-          ))}
+        <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-4 col-span-2 lg:col-span-1">
+          <p className="text-xs text-gray-400 mb-1 flex items-center gap-1">
+            <Timer size={12} /> Avg. Waiting Time
+          </p>
+          <p className="text-xl font-bold text-brand-600 dark:text-brand-400">
+            {formatWaitTime(totals.avgWaitMinutes)}
+          </p>
+        </div>
       </div>
 
       {/* Table */}
@@ -190,7 +234,7 @@ export default function Patients() {
         {filtered.length === 0 ? (
           <p className="text-sm text-gray-400 text-center py-10">No records match these filters.</p>
         ) : (
-          <table className="w-full text-sm min-w-[640px]">
+          <table className="w-full text-sm min-w-[760px]">
             <thead>
               <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
                 <th className="font-medium py-2 pr-3">Patient ID</th>
@@ -199,6 +243,7 @@ export default function Patients() {
                 <th className="font-medium py-2 pr-3">Date</th>
                 <th className="font-medium py-2 pr-3">Source</th>
                 <th className="font-medium py-2 pr-3 text-right">Fee</th>
+                <th className="font-medium py-2 pr-3 text-right print:hidden">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -230,6 +275,21 @@ export default function Patients() {
                   </td>
                   <td className="py-2.5 pr-3 text-right font-medium text-gray-800 dark:text-gray-200">
                     ₹{a.fee}
+                  </td>
+                  <td className="py-2.5 pr-3 text-right print:hidden">
+                    <div className="flex justify-end">
+                      <PatientQuickActions
+                        clinicId={clinicId}
+                        patientName={a.patientName}
+                        patientPhone={a.patientPhone}
+                        patientAge={a.patientAge}
+                        patientGender={a.patientGender}
+                        doctorName={a.doctorName}
+                        doctorQualification={doctors.find((d) => d._id === a.doctorId)?.qualification}
+                        appointmentDate={a.appointmentDate}
+                        size="xs"
+                      />
+                    </div>
                   </td>
                 </tr>
               ))}

@@ -14,6 +14,7 @@ import {
   CheckCircle2,
 } from 'lucide-react'
 import ClinicDashboardLayout from '../../components/clinic/ClinicDashboardLayout.jsx'
+import PatientQuickActions from '../../components/clinic/PatientQuickActions.jsx'
 import { useClinicAuth } from '../../contexts/ClinicAuthContext.jsx'
 import { mockDoctorsByClinic, createMockAppointment } from '../../services/mockData.js'
 
@@ -411,28 +412,46 @@ export default function Appointments() {
             </p>
           ) : (
             <div className="space-y-3">
-              {recent.map((appt) => (
-                <div
-                  key={appt.appointmentId}
-                  className="flex items-center gap-3 pb-3 border-b border-gray-50 dark:border-gray-800 last:border-0 last:pb-0"
-                >
-                  <span className="w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 font-bold text-xs shrink-0">
-                    {appt.patientName
-                      .split(' ')
-                      .map((n) => n[0])
-                      .join('')
-                      .slice(0, 2)}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                      {appt.patientName}
-                    </p>
-                    <p className="text-xs text-gray-400 truncate">
-                      {appt.doctorName} · {appt.appointmentDay} · Token #{appt.tokenNumber}
-                    </p>
+              {recent.map((appt) => {
+                const doctor = doctors.find((d) => d._id === appt.doctorId)
+                return (
+                  <div
+                    key={appt.appointmentId}
+                    className="flex flex-col gap-2 pb-3 border-b border-gray-50 dark:border-gray-800 last:border-0 last:pb-0"
+                  >
+                    <div className="flex items-center gap-3">
+                      <span className="w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 font-bold text-xs shrink-0">
+                        {appt.patientName
+                          .split(' ')
+                          .map((n) => n[0])
+                          .join('')
+                          .slice(0, 2)}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                          {appt.patientName}
+                        </p>
+                        <p className="text-xs text-gray-400 truncate">
+                          {appt.doctorName} · {appt.appointmentDay} · Token #{appt.tokenNumber}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="pl-12">
+                      <PatientQuickActions
+                        clinicId={clinicId}
+                        patientName={appt.patientName}
+                        patientPhone={appt.patientPhone}
+                        patientAge={appt.patientAge}
+                        patientGender={appt.patientGender}
+                        doctorName={appt.doctorName}
+                        doctorQualification={doctor?.qualification}
+                        appointmentDate={appt.appointmentDate}
+                        size="xs"
+                      />
+                    </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>

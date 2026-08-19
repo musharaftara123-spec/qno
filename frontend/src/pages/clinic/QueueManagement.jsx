@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import toast from 'react-hot-toast'
 import {
   ChevronDown,
@@ -15,6 +15,8 @@ import {
   Square,
   Bell,
   Info,
+  Search,
+  X,
 } from 'lucide-react'
 import ClinicDashboardLayout from '../../components/clinic/ClinicDashboardLayout.jsx'
 import { mockClinicQueues } from '../../services/clinicMockData.js'
@@ -27,20 +29,19 @@ const STAT_ICONS = {
   noShow: UserX,
 }
 
-// Builds the live, mutable queue state for one doctor from the static mock
-// data. Each doctor's state (and undo history) is independent, matching
-// "operating one queue must never affect another doctor's queue".
+// Builds the live, mutable queue state for one doctor from the static mock data.
 function buildInitialQueueState(doctorId) {
-  const base = mockClinicQueues[doctorId]
+  const base = mockClinicQueues[doctorId] || {}
   return {
-    doctorName: base.doctorName,
-    specialty: base.specialty,
-    avgWaitMin: base.avgWaitMin,
-    currentToken: base.currentToken,
-    waitingList: base.waitingList,
-    waiting: base.waiting,
-    servedToday: base.servedToday,
-    noShowToday: base.noShowToday,
+    doctorName: base.doctorName || 'Doctor',
+    specialty: base.specialty || '',
+    avgWaitMin: base.avgWaitMin || 15,
+    avgConsultationMin: base.avgConsultationMin || 12,
+    currentToken: base.currentToken || { token: '---', patientName: 'N/A', status: 'Idle' },
+    waitingList: base.waitingList || [],
+    waiting: base.waiting || 0,
+    servedToday: base.servedToday || 0,
+    noShowToday: base.noShowToday || 0,
     isHeld: false,
     isEnded: false,
     history: [], // stack of previous snapshots, for multi-level Undo
@@ -48,7 +49,6 @@ function buildInitialQueueState(doctorId) {
 }
 
 function snapshot(state) {
-  // Shallow-ish clone of everything Undo needs to restore
   return {
     currentToken: state.currentToken,
     waitingList: state.waitingList,
@@ -69,6 +69,17 @@ export default function QueueManagement() {
 
   const [selectedDoctorId, setSelectedDoctorId] = useState(availableIds[0])
   const [selectorOpen, setSelectorOpen] = useState(false)
+  const [currentTime, setCurrentTime] = useState(() => new Date())
+  const [searchQuery, setSearchQuery] = useState('')
+
+  // Keep live time updated every 30 seconds for accurate clock calculation
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date())
+    }, 30000)
+
+    return () => clearInterval(timer)
+  }, [])
 
   // Per-doctor live state, lazily initialized on first visit to that doctor
   const [queueStates, setQueueStates] = useState(() => ({
@@ -81,7 +92,9 @@ export default function QueueManagement() {
   const updateQueue = (updater) => {
     setQueueStates((prev) => ({
       ...prev,
-      [selectedDoctorId]: updater(prev[selectedDoctorId] || buildInitialQueueState(selectedDoctorId)),
+      [selectedDoctorId]: updater(
+        prev[selectedDoctorId] || buildInitialQueueState(selectedDoctorId)
+      ),
     }))
   }
 
@@ -90,6 +103,7 @@ export default function QueueManagement() {
     setQueueStates((prev) =>
       prev[id] ? prev : { ...prev, [id]: buildInitialQueueState(id) }
     )
+    setSearchQuery('') // Clear search when changing doctors
   }
 
   const handleNext = () => {
@@ -115,7 +129,7 @@ export default function QueueManagement() {
         },
         waitingList: rest,
         waiting: rest.length,
-        servedToday: q.servedToday + 1, // previous patient counted as served
+        servedToday: q.servedToday + 1,
       }
     })
   }
@@ -143,7 +157,7 @@ export default function QueueManagement() {
         },
         waitingList: rest,
         waiting: rest.length,
-        noShowToday: q.noShowToday + 1, // previous patient marked as no-show
+        noShowToday: q.noShowToday + 1,
       }
     })
     toast.success('Patient skipped')
@@ -177,6 +191,45 @@ export default function QueueManagement() {
     updateQueue((q) => ({ ...q, isEnded: true, isHeld: false }))
     toast.success('Queue ended for today')
   }
+
+  // Calculation helpers
+  const formatConsultationTime = (minutesFromNow) => {
+    const estimated = new Date(
+      currentTime.getTime() + minutesFromNow * 60 * 1000
+    )
+    return estimated.toLocaleTimeString([], {
+      hour: 'numeric',
+      minute: '2-digit',
+    })
+  }
+
+  const waitingPatients = useMemo(() => {
+    const consultationTime = queue.avgConsultationMin || 12
+
+    return queue.waitingList.map((patient, index) => {
+      const position = index + 1
+      const estimatedWait = position * consultationTime
+
+      return {
+        ...patient,
+        position,
+        estimatedWait,
+        estimatedConsultationTime: formatConsultationTime(estimatedWait),
+      }
+    })
+  }, [queue.waitingList, queue.avgConsultationMin, currentTime])
+
+  // Filter list by token or patient name
+  const filteredPatients = useMemo(() => {
+    if (!searchQuery.trim()) return waitingPatients
+
+    const term = searchQuery.toLowerCase().trim()
+    return waitingPatients.filter(
+      (p) =>
+        p.patientName.toLowerCase().includes(term) ||
+        p.token.toLowerCase().includes(term)
+    )
+  }, [waitingPatients, searchQuery])
 
   const stats = [
     { key: 'waiting', label: 'Waiting', value: queue.waiting, color: 'text-gray-800 dark:text-gray-100' },
@@ -299,30 +352,65 @@ export default function QueueManagement() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
-        {/* Waiting List */}
+        {/* Waiting List Section */}
         <div className="lg:col-span-2 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5">
-          <p className="text-sm font-semibold text-gray-700 dark:text-gray-200 mb-3">
-            Waiting List
-          </p>
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+            <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
+              Waiting List
+            </p>
+
+            {/* Search Input */}
+            <div className="relative w-full sm:w-64">
+              <Search
+                size={15}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400"
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search token or name..."
+                className="w-full pl-9 pr-8 py-1.5 text-xs rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-800 dark:text-gray-100 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-brand-500/20 focus:border-brand-500 transition-all"
+              />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery('')}
+                  aria-label="Clear search"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600 dark:hover:text-gray-200"
+                >
+                  <X size={14} />
+                </button>
+              )}
+            </div>
+          </div>
+
           {queue.waitingList.length === 0 ? (
             <p className="text-sm text-gray-400 dark:text-gray-500 text-center py-8">
               No patients waiting.
             </p>
+          ) : filteredPatients.length === 0 ? (
+            <p className="text-sm text-gray-400 dark:text-gray-500 text-center py-8">
+              No matching patients found.
+            </p>
           ) : (
             <div className="overflow-x-auto -mx-1">
-              <table className="w-full text-sm min-w-[360px]">
+              <table className="w-full text-sm min-w-[420px]">
                 <thead>
                   <tr className="text-left text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
                     <th className="font-medium py-2 px-1 w-8">#</th>
                     <th className="font-medium py-2 px-1">Token</th>
                     <th className="font-medium py-2 px-1">Patient Name</th>
-                    <th className="font-medium py-2 px-1 text-right">Wait Time</th>
+                    <th className="font-medium py-2 px-1 text-right">Waiting Time</th>
+                    <th className="font-medium py-2 px-1 text-right">Est. Consultation</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {queue.waitingList.map((row, i) => (
-                    <tr key={row.token} className="border-t border-gray-50 dark:border-gray-800">
-                      <td className="py-2.5 px-1 text-gray-400">{i + 1}</td>
+                  {filteredPatients.map((row) => (
+                    <tr
+                      key={row.token}
+                      className="border-t border-gray-50 dark:border-gray-800"
+                    >
+                      <td className="py-2.5 px-1 text-gray-400">{row.position}</td>
                       <td className="py-2.5 px-1">
                         <span className="font-semibold text-brand-600 dark:text-brand-400">
                           {row.token}
@@ -331,8 +419,16 @@ export default function QueueManagement() {
                       <td className="py-2.5 px-1 text-gray-700 dark:text-gray-300 whitespace-nowrap">
                         {row.patientName}
                       </td>
-                      <td className="py-2.5 px-1 text-right text-gray-500 dark:text-gray-400">
-                        {row.waitMin} min
+                      <td className="py-2.5 px-1 text-right text-gray-500 dark:text-gray-400 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1 justify-end">
+                          <Clock3 size={13} />
+                          ~{row.estimatedWait} min
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-1 text-right whitespace-nowrap">
+                        <span className="font-semibold text-brand-600 dark:text-brand-400">
+                          ~{row.estimatedConsultationTime}
+                        </span>
                       </td>
                     </tr>
                   ))}
@@ -397,7 +493,7 @@ export default function QueueManagement() {
 }
 
 function DoctorSelector({ doctorIds, selectedDoctorId, onSelect, open, setOpen, fullWidth }) {
-  const selected = mockClinicQueues[selectedDoctorId]
+  const selected = mockClinicQueues[selectedDoctorId] || {}
 
   return (
     <div className={`relative ${fullWidth ? 'w-full' : ''}`}>
@@ -418,7 +514,7 @@ function DoctorSelector({ doctorIds, selectedDoctorId, onSelect, open, setOpen, 
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 mt-2 w-64 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft z-20 overflow-hidden">
             {doctorIds.map((id) => {
-              const doc = mockClinicQueues[id]
+              const doc = mockClinicQueues[id] || {}
               const isSelected = id === selectedDoctorId
               return (
                 <button
