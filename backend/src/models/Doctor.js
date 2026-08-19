@@ -1,29 +1,72 @@
-import mongoose from 'mongoose'
+import mongoose from 'mongoose';
 
-// Mirrors mockData.js -> mockDoctorsByClinic[...].doctors[].
-// `availability` is what DoctorSelect.jsx / clinic Appointments.jsx render
-// as session cards (day + time range + how many already booked).
 const availabilitySchema = new mongoose.Schema(
   {
-    day: { type: String, required: true }, // 'Monday' ... 'Sunday'
-    start: { type: String, required: true }, // '4:00 PM'
-    end: { type: String, required: true },
+    day: {
+      type: String,
+      required: true,
+    },
+    start: {
+      type: String,
+      required: true,
+    },
+    end: {
+      type: String,
+      required: true,
+    },
+    totalSlots: {
+      type: Number,
+      required: true,
+      min: 1,
+      default: 1,
+    },
+    bookedSlots: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
   },
   { _id: false }
-)
+);
 
 const doctorSchema = new mongoose.Schema(
   {
-    clinic: { type: mongoose.Schema.Types.ObjectId, ref: 'Clinic', required: true },
-    name: { type: String, required: true },
-    qualification: { type: String, default: '' },
-    specialty: { type: String, required: true },
-    rating: { type: Number, default: 0 },
-    fee: { type: Number, required: true },
-    active: { type: Boolean, default: true },
-    availability: { type: [availabilitySchema], default: [] },
+    clinicId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Clinic',
+      required: true,
+    },
+    name: {
+      type: String,
+      required: true,
+    },
+    specialization: {
+      type: String,
+      required: true,
+    },
+    experience: {
+      type: String,
+    },
+    qualification: {
+      type: String,
+    },
+    fee: {
+      type: Number,
+      required: true,
+    },
+    phone: {
+      type: String,
+    },
+    email: {
+      type: String,
+    },
+    availability: [availabilitySchema],
+    isActive: {
+      type: Boolean,
+      default: true,
+    },
   },
   { timestamps: true }
-)
+);
 
-export default mongoose.model('Doctor', doctorSchema)
+export default mongoose.model('Doctor', doctorSchema);

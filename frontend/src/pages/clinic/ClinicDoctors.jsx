@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react'
+import React, { useEffect, useState, useMemo } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Stethoscope,
@@ -18,13 +18,10 @@ import {
 } from 'lucide-react'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import toast from 'react-hot-toast'
 import ClinicDashboardLayout from '../../components/clinic/ClinicDashboardLayout.jsx'
-import {
-  mockClinicInfo,
-  mockDoctors,
-  mockDoctorAppointments,
-  WEEKDAY_ORDER,
-} from '../../services/clinicMockData.js'
+import { WEEKDAY_ORDER } from '../../services/clinicMockData.js'
+import api from '../../services/api.js'
 
 const currency = (n) =>
   new Intl.NumberFormat('en-IN', {
@@ -79,7 +76,7 @@ function exportDoctorPdf(doctor, records = [], range) {
   const { totalPatients, totalAmount, clinicCount, onlineCount } = summarize(records)
 
   doc.setFontSize(14)
-  doc.text(`${mockClinicInfo?.name || 'Clinic'} - ${doctor.name}`, 14, 16)
+  doc.text(`${doctor.name}`, 14, 16)
   doc.setFontSize(10)
   doc.setTextColor(100)
   doc.text(`${doctor.specialty} - ${rangeLabel(range)} report`, 14, 22)
@@ -92,7 +89,8 @@ function exportDoctorPdf(doctor, records = [], range) {
   doc.text(`Clinic Visits: ${clinicCount}`, 14, 42)
   doc.text(`Online Bookings: ${onlineCount}`, 90, 42)
 
-  autoTable(doc, {
+  const tableFn = autoTable.default || autoTable
+  tableFn(doc, {
     startY: 48,
     head: [['Date', 'Patient', 'Source', 'Amount']],
     body: records.map((r) => [
@@ -109,9 +107,6 @@ function exportDoctorPdf(doctor, records = [], range) {
   doc.save(`${doctor.name.replace(/\s+/g, '_')}_${range}_report.pdf`)
 }
 
-// Sorts a doctor's weekly sessions Monday -> Sunday, and (for "next
-// available") reorders them starting from today going forward, so the
-// first entry with an open slot is genuinely the next one coming up.
 function sortByWeekday(sessions, fromToday = false) {
   const list = [...(sessions || [])]
   if (!fromToday) {
@@ -137,9 +132,6 @@ function weeklyTotals(availability = []) {
   return { totalSlots, bookedSlots, occupancy }
 }
 
-// Add / Edit doctor. Keyed by the parent so it always mounts fresh (see
-// `key={formModal.doctor?.id || 'new'}` below) instead of needing an effect
-// to resync form state when switching between doctors.
 function DoctorFormModal({ mode = 'add', initial, onClose, onSubmit }) {
   const [form, setForm] = useState({
     name: initial?.name || '',
@@ -262,10 +254,6 @@ function DoctorFormModal({ mode = 'add', initial, onClose, onSubmit }) {
   )
 }
 
-// Appointment-history report (Day/Week/Month/Year totals + PDF export).
-// Separate from the weekly-slots schedule (DoctorSlotsDrawer) below —
-// this one is about *past* patients seen, that one is about *future*
-// availability.
 function DoctorReportDrawer({ doctor, records = [], onClose }) {
   const [range, setRange] = useState('day')
   if (!doctor) return null
@@ -348,7 +336,7 @@ function DoctorReportDrawer({ doctor, records = [], onClose }) {
               </thead>
               <tbody>
                 {filtered.map((r) => (
-                  <tr key={r.id} className="border-b border-gray-50 dark:border-gray-800/60">
+                  <tr key={r.id || r._id} className="border-b border-gray-50 dark:border-gray-800/60">
                     <td className="py-2 pr-2 text-gray-600 dark:text-gray-300">
                       {new Date(r.date).toLocaleDateString('en-IN')}
                     </td>
@@ -378,13 +366,12 @@ function DoctorReportDrawer({ doctor, records = [], onClose }) {
   )
 }
 
-// Day-wise weekly slot schedule for one doctor — this is what opens when
-// you tap a doctor's card. Lets clinic staff see exactly which days the
-// doctor is available, what time, and how full each session already is,
-// and edit that schedule (add/remove sessions, change timing or capacity).
 function DoctorSlotsDrawer({ doctor, onClose, onSave }) {
   const [sessions, setSessions] = useState(() =>
-    sortByWeekday(doctor.availability || []).map((s, i) => ({ ...s, _key: `${doctor.id}_${i}_${Date.now()}` }))
+    sortByWeekday(doctor.availability || []).map((s, i) => ({
+      ...s,
+      _key: `${doctor._id || doctor.id}_${i}_${Date.now()}`,
+    }))
   )
 
   if (!doctor) return null
@@ -407,12 +394,12 @@ function DoctorSlotsDrawer({ doctor, onClose, onSave }) {
   const addSession = () =>
     setSessions((prev) => [
       ...prev,
-      { day: 'Monday', start: '9:00 AM', end: '12:00 PM', totalSlots: 10, bookedSlots: 0, _key: `new_${Date.now()}` },
+      { day: 'Monday', start: '9:00 AM', end: '12:00 PM', totalSlots: 10, bookedSlots: 0, _key: `new_${Date.now()}_${Math.random()}` },
     ])
 
   const handleSave = () => {
     const clean = sessions.map(({ _key, ...rest }) => rest)
-    onSave(doctor.id, clean)
+    onSave(doctor._id || doctor.id, clean)
     onClose()
   }
 
@@ -479,10 +466,7 @@ function DoctorSlotsDrawer({ doctor, onClose, onSave }) {
               const full = (s.bookedSlots || 0) >= (s.totalSlots || 0)
               const pct = s.totalSlots ? Math.min(100, Math.round(((s.bookedSlots || 0) / s.totalSlots) * 100)) : 0
               return (
-                <div
-                  key={s._key}
-                  className="rounded-xl border border-gray-100 dark:border-gray-800 p-3"
-                >
+                <div key={s._key} className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
                   <div className="flex flex-wrap items-center gap-2">
                     <select
                       value={s.day}
@@ -575,44 +559,146 @@ function DoctorSlotsDrawer({ doctor, onClose, onSave }) {
 }
 
 export default function ClinicDoctors() {
-  const [doctors, setDoctors] = useState(mockDoctors)
-  const [appointments, setAppointments] = useState(mockDoctorAppointments)
+  const [doctors, setDoctors] = useState([])
+  const [appointments, setAppointments] = useState({})
+  const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all') // all | active | leave
   const [reportDoctorId, setReportDoctorId] = useState(null)
   const [slotsDoctorId, setSlotsDoctorId] = useState(null)
   const [formModal, setFormModal] = useState(null) // { mode: 'add' | 'edit', doctor?: Doctor }
 
-  const addDoctor = (values) => {
-    const id = `doc_${Date.now()}`
-    setDoctors((prev) => [{ id, active: true, availability: [], ...values }, ...prev])
-    setAppointments((prev) => ({ ...prev, [id]: [] }))
+  const fetchData = async () => {
+    try {
+      setLoading(true)
+      const [doctorsRes, appointmentsRes] = await Promise.allSettled([
+        api.get('/clinic/doctors'),
+        api.get('/clinic/appointments'),
+      ])
+
+      if (doctorsRes.status === 'fulfilled') {
+        setDoctors(doctorsRes.value.data.doctors || doctorsRes.value.data || [])
+      } else {
+        toast.error('Failed to load doctors')
+      }
+
+      if (appointmentsRes.status === 'fulfilled') {
+        const apptsList = appointmentsRes.value.data.appointments || appointmentsRes.value.data || []
+        const grouped = apptsList.reduce((acc, appt) => {
+          const docId = appt.doctorId || appt.doctor?._id || appt.doctor
+          if (docId) {
+            acc[docId] = acc[docId] || []
+            acc[docId].push(appt)
+          }
+          return acc
+        }, {})
+        setAppointments(grouped)
+      }
+    } catch (error) {
+      console.error('Failed to load clinic data:', error)
+      toast.error(error.message || 'Error loading clinic data')
+    } finally {
+      setLoading(false)
+    }
   }
 
-  const editDoctor = (id, values) => {
-    setDoctors((prev) => prev.map((d) => (d.id === id ? { ...d, ...values } : d)))
+  useEffect(() => {
+    fetchData()
+  }, [])
+
+  const addDoctor = async (values) => {
+    try {
+      const response = await api.post('/clinic/doctors', values)
+      const doctor = response.data.doctor || response.data
+      setDoctors((prev) => [doctor, ...prev])
+      toast.success('Doctor added successfully')
+    } catch (error) {
+      console.error('Add doctor error:', error)
+      toast.error(error.response?.data?.message || error.message || 'Failed to add doctor')
+    }
   }
 
-  const removeDoctor = (id) => {
-    setDoctors((prev) => prev.filter((d) => d.id !== id))
-    setAppointments((prev) => {
-      const next = { ...prev }
-      delete next[id]
-      return next
-    })
-    if (reportDoctorId === id) setReportDoctorId(null)
-    if (slotsDoctorId === id) setSlotsDoctorId(null)
+  const editDoctor = async (id, values) => {
+    try {
+      const response = await api.patch(`/clinic/doctors/${id}`, values)
+      const updatedDoctor = response.data.doctor || response.data
+      setDoctors((prev) =>
+        prev.map((d) => ((d._id || d.id) === id ? updatedDoctor : d))
+      )
+      toast.success('Doctor updated successfully')
+    } catch (error) {
+      console.error('Update doctor error:', error)
+      toast.error(error.response?.data?.message || error.message || 'Failed to update doctor')
+    }
   }
 
-  const toggleActive = (id) =>
-    setDoctors((prev) => prev.map((d) => (d.id === id ? { ...d, active: !d.active } : d)))
+  const removeDoctor = async (id) => {
+    const confirmed = window.confirm('Are you sure you want to remove this doctor?')
+    if (!confirmed) return
 
-  const updateAvailability = (id, availability) =>
-    setDoctors((prev) => prev.map((d) => (d.id === id ? { ...d, availability } : d)))
+    try {
+      await api.delete(`/clinic/doctors/${id}`)
+      setDoctors((prev) => prev.filter((d) => (d._id || d.id) !== id))
+      setAppointments((prev) => {
+        const next = { ...prev }
+        delete next[id]
+        return next
+      })
+      if (reportDoctorId === id) setReportDoctorId(null)
+      if (slotsDoctorId === id) setSlotsDoctorId(null)
+      toast.success('Doctor removed successfully')
+    } catch (error) {
+      console.error('Delete doctor error:', error)
+      toast.error(error.response?.data?.message || error.message || 'Failed to remove doctor')
+    }
+  }
+
+  const toggleActive = async (id) => {
+    const doctor = doctors.find((d) => (d._id || d.id) === id)
+    if (!doctor) return
+
+    try {
+      const response = await api.patch(`/clinic/doctors/${id}`, {
+        active: !doctor.active,
+      })
+      const updatedDoctor = response.data.doctor || response.data
+      setDoctors((prev) =>
+        prev.map((d) => ((d._id || d.id) === id ? updatedDoctor : d))
+      )
+      toast.success(updatedDoctor.active ? 'Doctor marked active' : 'Doctor marked on leave')
+    } catch (error) {
+      console.error('Toggle doctor status error:', error)
+      toast.error(error.response?.data?.message || error.message || 'Failed to update doctor status')
+    }
+  }
+
+  const updateAvailability = async (id, availability) => {
+    try {
+      const response = await api.patch(`/clinic/doctors/${id}`, {
+        availability,
+      })
+
+      const updatedDoctor = response.data.doctor || response.data
+
+      setDoctors((prev) =>
+        prev.map((d) => ((d._id || d.id) === id ? updatedDoctor : d))
+      )
+
+      toast.success('Schedule saved')
+    } catch (error) {
+      console.error('Save schedule error:', error)
+      toast.error(
+        error.response?.data?.message ||
+        error.message ||
+        'Failed to save schedule'
+      )
+    }
+  }
 
   const filtered = doctors.filter((d) => {
     const q = query.toLowerCase()
-    const matchesQuery = d.name.toLowerCase().includes(q) || d.specialty.toLowerCase().includes(q)
+    const matchesQuery =
+      d.name?.toLowerCase().includes(q) || d.specialty?.toLowerCase().includes(q)
     const matchesStatus =
       statusFilter === 'all' || (statusFilter === 'active' ? d.active : !d.active)
     return matchesQuery && matchesStatus
@@ -621,10 +707,11 @@ export default function ClinicDoctors() {
   const todayStatsByDoctor = useMemo(() => {
     const map = {}
     doctors.forEach((d) => {
-      const todays = filterAppointments(appointments[d.id] || [], 'day')
+      const doctorId = d._id || d.id
+      const todays = filterAppointments(appointments[doctorId] || [], 'day')
       const { totalPatients, totalAmount } = summarize(todays)
-      map[d.id] = {
-        bookedSlots: Math.min(totalPatients, d.totalSlots),
+      map[doctorId] = {
+        bookedSlots: Math.min(totalPatients, d.totalSlots || 0),
         patientsToday: totalPatients,
         paymentsToday: totalAmount,
       }
@@ -632,8 +719,8 @@ export default function ClinicDoctors() {
     return map
   }, [doctors, appointments])
 
-  const reportDoctor = doctors.find((d) => d.id === reportDoctorId) || null
-  const slotsDoctor = doctors.find((d) => d.id === slotsDoctorId) || null
+  const reportDoctor = doctors.find((d) => (d._id || d.id) === reportDoctorId) || null
+  const slotsDoctor = doctors.find((d) => (d._id || d.id) === slotsDoctorId) || null
 
   return (
     <ClinicDashboardLayout
@@ -697,139 +784,155 @@ export default function ClinicDoctors() {
           </div>
         </div>
 
-        <div className="space-y-3">
-          <AnimatePresence>
-            {filtered.map((doc) => {
-              const stats = todayStatsByDoctor[doc.id] || {
-                bookedSlots: 0,
-                patientsToday: 0,
-                paymentsToday: 0,
-              }
-              const available = doc.totalSlots - stats.bookedSlots
-              const nextAvailable = getNextAvailableSession(doc.availability)
-              return (
-                <motion.div
-                  key={doc.id}
-                  initial={{ opacity: 0, y: 6 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, x: -8 }}
-                  onClick={() => setSlotsDoctorId(doc.id)}
-                  className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-gray-100 dark:border-gray-800 p-3 cursor-pointer hover:border-brand-200 dark:hover:border-brand-800 transition-colors"
-                >
-                  <div className="w-10 h-10 rounded-xl bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 flex items-center justify-center shrink-0">
-                    <Stethoscope size={17} />
-                  </div>
+        {loading ? (
+          <div className="py-12 text-center text-sm text-gray-400">Loading doctors...</div>
+        ) : (
+          <div className="space-y-3">
+            <AnimatePresence>
+              {filtered.map((doc) => {
+                const doctorId = doc._id || doc.id
+                const stats = todayStatsByDoctor[doctorId] || {
+                  bookedSlots: 0,
+                  patientsToday: 0,
+                  paymentsToday: 0,
+                }
+                const available = (doc.totalSlots || 0) - stats.bookedSlots
+                const nextAvailable = getNextAvailableSession(doc.availability)
 
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                      <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
-                        {doc.name}
+                return (
+                  <motion.div
+                    key={doctorId}
+                    initial={{ opacity: 0, y: 6 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, x: -8 }}
+                    onClick={() => setSlotsDoctorId(doctorId)}
+                    className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-xl border border-gray-100 dark:border-gray-800 p-3 cursor-pointer hover:border-brand-200 dark:hover:border-brand-800 transition-colors"
+                  >
+                    <div className="w-10 h-10 rounded-xl bg-brand-50 dark:bg-brand-900/30 text-brand-600 dark:text-brand-400 flex items-center justify-center shrink-0">
+                      <Stethoscope size={17} />
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-2">
+                        <p className="text-sm font-medium text-gray-900 dark:text-white truncate">
+                          {doc.name}
+                        </p>
+                        <span
+                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                            doc.active
+                              ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                              : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+                          }`}
+                        >
+                          {doc.active ? 'Active' : 'On Leave'}
+                        </span>
+                      </div>
+                      <p className="text-xs text-gray-400 truncate">
+                        {doc.specialty}
+                        {doc.qualification ? ` · ${doc.qualification}` : ''}
                       </p>
-                      <span
-                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                      <p className="text-[11px] text-brand-600 dark:text-brand-400 mt-0.5 flex items-center gap-1">
+                        <CalendarClock size={11} />
+                        {nextAvailable
+                          ? `Next: ${nextAvailable.day}, ${nextAvailable.start}–${nextAvailable.end}`
+                          : (doc.availability || []).length === 0
+                          ? 'No schedule set yet'
+                          : 'Fully booked this week'}
+                      </p>
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-4 sm:gap-6 text-xs shrink-0">
+                      <div>
+                        <p className="text-gray-400">Today</p>
+                        <p className="font-semibold text-gray-800 dark:text-gray-100">
+                          {stats.bookedSlots}/{doc.totalSlots || 0}{' '}
+                          <span className="text-gray-400 font-normal">({available} open)</span>
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400">Patients</p>
+                        <p className="font-semibold text-gray-800 dark:text-gray-100">
+                          {stats.patientsToday}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-gray-400">Payments</p>
+                        <p className="font-semibold text-gray-800 dark:text-gray-100">
+                          {currency(stats.paymentsToday)}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div
+                      className="flex items-center gap-2 shrink-0"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <button
+                        onClick={() => setFormModal({ mode: 'edit', doctor: doc })}
+                        title="Edit doctor"
+                        className="w-8 h-8 rounded-lg flex items-center justify-center border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                      <button
+                        onClick={() => setReportDoctorId(doctorId)}
+                        title="View report"
+                        className="w-8 h-8 rounded-lg flex items-center justify-center border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800"
+                      >
+                        <BarChart3 size={14} />
+                      </button>
+                      <button
+                        onClick={() => toggleActive(doctorId)}
+                        title={doc.active ? 'Mark on leave' : 'Mark active'}
+                        className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-colors ${
                           doc.active
-                            ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                            : 'bg-gray-100 text-gray-500 dark:bg-gray-800 dark:text-gray-400'
+                            ? 'border-green-200 text-green-600 dark:border-green-800'
+                            : 'border-gray-200 text-gray-400 dark:border-gray-700'
                         }`}
                       >
-                        {doc.active ? 'Active' : 'On Leave'}
-                      </span>
+                        <Power size={14} />
+                      </button>
+                      <button
+                        onClick={() => removeDoctor(doctorId)}
+                        title="Remove doctor"
+                        className="w-8 h-8 rounded-lg flex items-center justify-center border border-red-100 text-red-500 hover:bg-red-50 dark:border-red-900/40 dark:hover:bg-red-900/20 transition-colors"
+                      >
+                        <Trash2 size={14} />
+                      </button>
+                      <ChevronRight
+                        size={16}
+                        className="text-gray-300 dark:text-gray-600 hidden sm:block"
+                      />
                     </div>
-                    <p className="text-xs text-gray-400 truncate">
-                      {doc.specialty}
-                      {doc.qualification ? ` · ${doc.qualification}` : ''}
-                    </p>
-                    <p className="text-[11px] text-brand-600 dark:text-brand-400 mt-0.5 flex items-center gap-1">
-                      <CalendarClock size={11} />
-                      {nextAvailable
-                        ? `Next: ${nextAvailable.day}, ${nextAvailable.start}–${nextAvailable.end}`
-                        : (doc.availability || []).length === 0
-                        ? 'No schedule set yet'
-                        : 'Fully booked this week'}
-                    </p>
-                  </div>
+                  </motion.div>
+                )
+              })}
+            </AnimatePresence>
 
-                  <div className="flex flex-wrap items-center gap-4 sm:gap-6 text-xs shrink-0">
-                    <div>
-                      <p className="text-gray-400">Today</p>
-                      <p className="font-semibold text-gray-800 dark:text-gray-100">
-                        {stats.bookedSlots}/{doc.totalSlots}{' '}
-                        <span className="text-gray-400 font-normal">({available} open)</span>
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400">Patients</p>
-                      <p className="font-semibold text-gray-800 dark:text-gray-100">{stats.patientsToday}</p>
-                    </div>
-                    <div>
-                      <p className="text-gray-400">Payments</p>
-                      <p className="font-semibold text-gray-800 dark:text-gray-100">
-                        {currency(stats.paymentsToday)}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-2 shrink-0" onClick={(e) => e.stopPropagation()}>
-                    <button
-                      onClick={() => setFormModal({ mode: 'edit', doctor: doc })}
-                      title="Edit doctor"
-                      className="w-8 h-8 rounded-lg flex items-center justify-center border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800"
-                    >
-                      <Pencil size={14} />
-                    </button>
-                    <button
-                      onClick={() => setReportDoctorId(doc.id)}
-                      title="View report"
-                      className="w-8 h-8 rounded-lg flex items-center justify-center border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800"
-                    >
-                      <BarChart3 size={14} />
-                    </button>
-                    <button
-                      onClick={() => toggleActive(doc.id)}
-                      title={doc.active ? 'Mark on leave' : 'Mark active'}
-                      className={`w-8 h-8 rounded-lg flex items-center justify-center border transition-colors ${
-                        doc.active
-                          ? 'border-green-200 text-green-600 dark:border-green-800'
-                          : 'border-gray-200 text-gray-400 dark:border-gray-700'
-                      }`}
-                    >
-                      <Power size={14} />
-                    </button>
-                    <button
-                      onClick={() => removeDoctor(doc.id)}
-                      title="Remove doctor"
-                      className="w-8 h-8 rounded-lg flex items-center justify-center border border-red-100 text-red-500 hover:bg-red-50 dark:border-red-900/40 dark:hover:bg-red-900/20 transition-colors"
-                    >
-                      <Trash2 size={14} />
-                    </button>
-                    <ChevronRight size={16} className="text-gray-300 dark:text-gray-600 hidden sm:block" />
-                  </div>
-                </motion.div>
-              )
-            })}
-          </AnimatePresence>
-
-          {filtered.length === 0 && (
-            <p className="text-center text-xs text-gray-400 py-6">No doctors match your search.</p>
-          )}
-        </div>
+            {filtered.length === 0 && (
+              <p className="text-center text-xs text-gray-400 py-6">No doctors match your search.</p>
+            )}
+          </div>
+        )}
       </div>
 
       {formModal && (
         <DoctorFormModal
-          key={formModal.doctor?.id || 'new'}
+          key={formModal.doctor?._id || formModal.doctor?.id || 'new'}
           mode={formModal.mode}
           initial={formModal.doctor}
           onClose={() => setFormModal(null)}
           onSubmit={(values) =>
-            formModal.mode === 'edit' ? editDoctor(formModal.doctor.id, values) : addDoctor(values)
+            formModal.mode === 'edit'
+              ? editDoctor(formModal.doctor._id || formModal.doctor.id, values)
+              : addDoctor(values)
           }
         />
       )}
 
       {slotsDoctor && (
         <DoctorSlotsDrawer
-          key={slotsDoctor.id}
+          key={slotsDoctor._id || slotsDoctor.id}
           doctor={slotsDoctor}
           onClose={() => setSlotsDoctorId(null)}
           onSave={updateAvailability}
@@ -839,7 +942,7 @@ export default function ClinicDoctors() {
       {reportDoctor && (
         <DoctorReportDrawer
           doctor={reportDoctor}
-          records={appointments[reportDoctor.id] || []}
+          records={appointments[reportDoctor._id || reportDoctor.id] || []}
           onClose={() => setReportDoctorId(null)}
         />
       )}

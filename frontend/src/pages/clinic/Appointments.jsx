@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react'
+import React, { useMemo, useState, useEffect } from 'react'
 import toast from 'react-hot-toast'
 import {
   UserPlus,
@@ -21,10 +21,6 @@ import { mockDoctorsByClinic, createMockAppointment } from '../../services/mockD
 const GENDERS = ['Male', 'Female', 'Other']
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
 
-// Returns the next `count` calendar dates that fall on `dayName`
-// (e.g. "Tuesday"), starting from today. Lets reception book a walk-in
-// into the doctor's very next session for that day, or a few weeks out
-// for a follow-up, without ever picking a day the doctor doesn't work.
 function getUpcomingDatesForDay(dayName, count = 4) {
   const targetIdx = WEEKDAYS.indexOf(dayName)
   if (targetIdx === -1) return []
@@ -53,20 +49,33 @@ function formatDateLabel(date, isFirst) {
 export default function Appointments() {
   const { user } = useClinicAuth()
   const clinicId = user?.clinicId || 'clinic_1'
-  const doctors = mockDoctorsByClinic[clinicId]?.doctors || []
+  
+  const doctors = useMemo(() => {
+    return mockDoctorsByClinic[clinicId]?.doctors || []
+  }, [clinicId])
 
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [age, setAge] = useState('')
   const [gender, setGender] = useState('')
-  const [doctorId, setDoctorId] = useState(doctors[0]?._id || '')
-  const [selectedSession, setSelectedSession] = useState(null) // { day, start, end, queueLength }
+  const [doctorId, setDoctorId] = useState('')
+  const [selectedSession, setSelectedSession] = useState(null)
   const [selectedDateIdx, setSelectedDateIdx] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [lastBooked, setLastBooked] = useState(null)
   const [recent, setRecent] = useState([])
 
-  const selectedDoctor = doctors.find((d) => d._id === doctorId)
+  // Ensure default doctor is selected when list loads
+  useEffect(() => {
+    if (doctors.length > 0 && !doctorId) {
+      setDoctorId(doctors[0]._id)
+    }
+  }, [doctors, doctorId])
+
+  const selectedDoctor = useMemo(() => {
+    return doctors.find((d) => String(d._id) === String(doctorId)) || null
+  }, [doctors, doctorId])
+
   const sessions = selectedDoctor?.availability || []
 
   const upcomingDates = useMemo(
@@ -86,8 +95,9 @@ export default function Appointments() {
     setSelectedDateIdx(0)
   }
 
-  const isValidPhone = /^[0-9]{10}$/.test(phone)
-  const isValidAge = age !== '' && Number(age) > 0 && Number(age) < 120
+  const isValidPhone = /^[6-9]\d{9}$/.test(phone)
+  const isValidAge = age !== '' && !isNaN(age) && Number(age) > 0 && Number(age) < 120
+  
   const canSubmit =
     name.trim().length >= 2 &&
     isValidPhone &&
@@ -102,7 +112,7 @@ export default function Appointments() {
     if (!canSubmit) {
       toast.error(
         !selectedSession
-          ? 'Please select a session (day) for the doctor first.'
+          ? 'Please select a session for the doctor first.'
           : 'Please fill in all fields correctly.'
       )
       return
@@ -116,16 +126,13 @@ export default function Appointments() {
     })
 
     try {
-      await new Promise((r) => setTimeout(r, 500)) // simulate booking + notification send
+      await new Promise((r) => setTimeout(r, 500))
 
-      // bookedBy: 'receptionist' — counter walk-ins are NOT subject to the
-      // online booking cap (MAX_ONLINE_BOOKINGS_PER_SLOT) that applies to
-      // patients booking through the app.
       const appointment = createMockAppointment({
         clinicId,
         doctorId,
         patientName: name.trim(),
-        patientPhone: phone,
+        patientPhone: phone.trim(),
         patientAge: Number(age),
         patientGender: gender,
         bookedBy: 'receptionist',
@@ -138,7 +145,7 @@ export default function Appointments() {
       setRecent((prev) => [appointment, ...prev].slice(0, 8))
       toast.success(`Appointment booked · Patient ID ${appointment.patientId}`)
 
-      // Reset form
+      // Reset form fields
       setName('')
       setPhone('')
       setAge('')
@@ -146,22 +153,23 @@ export default function Appointments() {
       setSelectedSession(null)
       setSelectedDateIdx(0)
     } catch (err) {
-      toast.error(err.message || 'Could not book this appointment. Please try again.')
+      toast.error(err?.message || 'Could not book this appointment. Please try again.')
     } finally {
       setSubmitting(false)
     }
   }
 
   const queueLink = lastBooked
-    ? `${window.location.origin}/queue/${lastBooked.patientId}`
+    ? `${window.location.origin}/queue/${encodeURIComponent(lastBooked.patientId)}`
     : ''
 
   const copyLink = async () => {
+    if (!queueLink) return
     try {
       await navigator.clipboard.writeText(queueLink)
       toast.success('Link copied')
     } catch {
-      // clipboard unavailable — non-critical
+      toast.error('Failed to copy link')
     }
   }
 
@@ -186,7 +194,6 @@ export default function Appointments() {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        {/* Booking form */}
         <div className="lg:col-span-2 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5">
           <div className="flex items-center gap-2 mb-4">
             <UserPlus size={16} className="text-brand-600 dark:text-brand-400" />
@@ -236,6 +243,7 @@ export default function Appointments() {
                 {GENDERS.map((g) => (
                   <button
                     key={g}
+                    type="button"
                     onClick={() => setGender(g)}
                     className="flex items-center gap-1.5"
                   >
@@ -260,21 +268,20 @@ export default function Appointments() {
                   onChange={(e) => handleDoctorChange(e.target.value)}
                   className="w-full h-11 pl-9 pr-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm appearance-none"
                 >
-                  {doctors.map((d) => (
-                    <option key={d._id} value={d._id}>
-                      {d.name} — {d.specialty}
-                    </option>
-                  ))}
+                  {doctors.length === 0 ? (
+                    <option value="">No doctors available</option>
+                  ) : (
+                    doctors.map((d) => (
+                      <option key={d._id} value={d._id}>
+                        {d.name} — {d.specialty}
+                      </option>
+                    ))
+                  )}
                 </select>
               </div>
             </Field>
           </div>
 
-          {/* Session (day) picker — mirrors the patient-side "Choose Session"
-              flow, driven by the doctor's actual availability, instead of
-              a free-form date/time input. Reception picks the DAY/session;
-              the queue token & estimated time are assigned automatically,
-              same as the patient app. No slot cap applies here. */}
           <div className="mt-5">
             <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2 block">
               Session
@@ -292,7 +299,7 @@ export default function Appointments() {
 
                   return (
                     <div
-                      key={session.day + index}
+                      key={`${session.day}-${index}`}
                       onClick={() => handleSessionSelect(session)}
                       className={`cursor-pointer rounded-2xl border p-3.5 transition-all ${
                         isSelected
@@ -340,8 +347,6 @@ export default function Appointments() {
             )}
           </div>
 
-          {/* Which occurrence of that weekday — lets reception book the very
-              next session, or a few weeks ahead for a follow-up visit. */}
           {selectedSession && upcomingDates.length > 0 && (
             <div className="mt-4">
               <label className="text-xs font-medium text-gray-500 dark:text-gray-400 mb-2 block">
@@ -351,6 +356,7 @@ export default function Appointments() {
                 {upcomingDates.map((d, idx) => (
                   <button
                     key={d.toISOString()}
+                    type="button"
                     onClick={() => setSelectedDateIdx(idx)}
                     className={`h-9 px-3 rounded-xl border text-xs font-medium transition-colors ${
                       selectedDateIdx === idx
@@ -366,6 +372,7 @@ export default function Appointments() {
           )}
 
           <button
+            type="button"
             onClick={handleSubmit}
             disabled={!canSubmit}
             className="w-full h-12 mt-5 rounded-2xl bg-brand-600 hover:bg-brand-700 disabled:bg-gray-200 disabled:text-gray-400 dark:disabled:bg-gray-800 text-white font-semibold transition-colors"
@@ -373,7 +380,6 @@ export default function Appointments() {
             {submitting ? 'Booking...' : 'Book Appointment'}
           </button>
 
-          {/* Confirmation with simulated WhatsApp/email + queue link */}
           {lastBooked && (
             <div className="mt-4 rounded-2xl bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800/40 p-4">
               <div className="flex items-center gap-2 text-green-700 dark:text-green-400 font-semibold text-sm mb-2">
@@ -391,6 +397,7 @@ export default function Appointments() {
                   className="flex-1 h-9 px-3 rounded-lg bg-white dark:bg-gray-900 border border-green-200 dark:border-green-800/40 text-xs text-gray-600 dark:text-gray-300"
                 />
                 <button
+                  type="button"
                   onClick={copyLink}
                   className="h-9 px-3 rounded-lg bg-white dark:bg-gray-900 border border-green-200 dark:border-green-800/40 text-green-700 dark:text-green-400"
                 >
@@ -401,7 +408,6 @@ export default function Appointments() {
           )}
         </div>
 
-        {/* Recent appointments */}
         <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5">
           <p className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">
             Recent Appointments
@@ -413,7 +419,7 @@ export default function Appointments() {
           ) : (
             <div className="space-y-3">
               {recent.map((appt) => {
-                const doctor = doctors.find((d) => d._id === appt.doctorId)
+                const doctor = doctors.find((d) => String(d._id) === String(appt.doctorId))
                 return (
                   <div
                     key={appt.appointmentId}
@@ -422,10 +428,12 @@ export default function Appointments() {
                     <div className="flex items-center gap-3">
                       <span className="w-9 h-9 rounded-full bg-brand-50 dark:bg-brand-900/30 flex items-center justify-center text-brand-600 dark:text-brand-400 font-bold text-xs shrink-0">
                         {appt.patientName
-                          .split(' ')
-                          .map((n) => n[0])
-                          .join('')
-                          .slice(0, 2)}
+                          ? appt.patientName
+                              .split(' ')
+                              .map((n) => n[0])
+                              .join('')
+                              .slice(0, 2)
+                          : 'P'}
                       </span>
                       <div className="min-w-0 flex-1">
                         <p className="text-sm font-medium text-gray-900 dark:text-white truncate">

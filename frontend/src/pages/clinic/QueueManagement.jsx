@@ -17,10 +17,11 @@ import {
   Info,
   Search,
   X,
+  Loader2,
 } from 'lucide-react'
 import ClinicDashboardLayout from '../../components/clinic/ClinicDashboardLayout.jsx'
-import { mockClinicQueues } from '../../services/clinicMockData.js'
 import { useClinicAuth } from '../../contexts/ClinicAuthContext.jsx'
+import api from '../../services/api.js'
 
 const STAT_ICONS = {
   waiting: Users,
@@ -29,22 +30,21 @@ const STAT_ICONS = {
   noShow: UserX,
 }
 
-// Builds the live, mutable queue state for one doctor from the static mock data.
-function buildInitialQueueState(doctorId) {
-  const base = mockClinicQueues[doctorId] || {}
+function buildInitialQueueState(doctor) {
   return {
-    doctorName: base.doctorName || 'Doctor',
-    specialty: base.specialty || '',
-    avgWaitMin: base.avgWaitMin || 15,
-    avgConsultationMin: base.avgConsultationMin || 12,
-    currentToken: base.currentToken || { token: '---', patientName: 'N/A', status: 'Idle' },
-    waitingList: base.waitingList || [],
-    waiting: base.waiting || 0,
-    servedToday: base.servedToday || 0,
-    noShowToday: base.noShowToday || 0,
+    doctorId: doctor?._id || doctor?.id || '',
+    doctorName: doctor?.name || doctor?.doctorName || 'Doctor',
+    specialty: doctor?.specialty || '',
+    avgWaitMin: doctor?.avgWaitMin || 15,
+    avgConsultationMin: doctor?.avgConsultationMin || 12,
+    currentToken: { token: '---', patientName: 'N/A', status: 'Idle' },
+    waitingList: [],
+    waiting: 0,
+    servedToday: 0,
+    noShowToday: 0,
     isHeld: false,
     isEnded: false,
-    history: [], // stack of previous snapshots, for multi-level Undo
+    history: [], // Stack of snapshots for client-side Undo
   }
 }
 
@@ -61,52 +61,141 @@ function snapshot(state) {
 export default function QueueManagement() {
   const { user } = useClinicAuth()
   const isOwner = user?.role === 'owner'
-  const doctorIds = Object.keys(mockClinicQueues)
 
-  const assignedIds = user?.assignedDoctorIds || doctorIds
-  const availableIds = isOwner ? doctorIds : assignedIds
-  const showSelector = isOwner || availableIds.length > 1
+  const [doctors, setDoctors] = useState([])
+  const [loadingDoctors, setLoadingDoctors] = useState(true)
+  const [loadingQueue, setLoadingQueue] = useState(false)
 
-  const [selectedDoctorId, setSelectedDoctorId] = useState(availableIds[0])
+  const [selectedDoctorId, setSelectedDoctorId] = useState(null)
   const [selectorOpen, setSelectorOpen] = useState(false)
   const [currentTime, setCurrentTime] = useState(() => new Date())
   const [searchQuery, setSearchQuery] = useState('')
+  const [queueStates, setQueueStates] = useState({})
 
-  // Keep live time updated every 30 seconds for accurate clock calculation
+  // Keep live clock updated every 30 seconds
   useEffect(() => {
     const timer = setInterval(() => {
       setCurrentTime(new Date())
     }, 30000)
-
     return () => clearInterval(timer)
   }, [])
 
-  // Per-doctor live state, lazily initialized on first visit to that doctor
-  const [queueStates, setQueueStates] = useState(() => ({
-    [availableIds[0]]: buildInitialQueueState(availableIds[0]),
-  }))
+  // 1. Load Doctors from backend
+  useEffect(() => {
+    async function loadDoctors() {
+      try {
+        setLoadingDoctors(true)
+        const response = await api.get('/clinic/doctors')
+        const docList = response.data.doctors || response.data || []
+        setDoctors(docList)
+
+        // Determine accessible doctor IDs based on user permissions
+        const allIds = docList.map((d) => d._id || d.id)
+        const assigned = user?.assignedDoctorIds?.length
+          ? user.assignedDoctorIds
+          : allIds
+        const available = isOwner ? allIds : assigned
+
+        if (available.length > 0) {
+          setSelectedDoctorId(available[0])
+        }
+      } catch (error) {
+        console.error('Failed to load doctors:', error)
+        toast.error(error.message || 'Failed to load doctors list')
+      } finally {
+        setLoadingDoctors(false)
+      }
+    }
+
+    loadDoctors()
+  }, [user, isOwner])
+
+  // Filter available doctors according to user role
+  const availableDoctors = useMemo(() => {
+    const allIds = doctors.map((d) => d._id || d.id)
+    const assigned = user?.assignedDoctorIds?.length
+      ? user.assignedDoctorIds
+      : allIds
+    const availableIds = isOwner ? allIds : assigned
+
+    return doctors.filter((doc) => availableIds.includes(doc._id || doc.id))
+  }, [doctors, user, isOwner])
+
+  const showSelector = isOwner || availableDoctors.length > 1
+
+  // 2. Fetch live Queue details when active doctor changes
+  useEffect(() => {
+    if (!selectedDoctorId) return
+
+    async function loadQueueData(doctorId) {
+      try {
+        setLoadingQueue(true)
+        const response = await api.get(`/clinic/doctors/${doctorId}/queue`)
+        const data = response.data || {}
+
+        setQueueStates((prev) => ({
+          ...prev,
+          [doctorId]: {
+            doctorId,
+            doctorName: data.doctorName || 'Doctor',
+            specialty: data.specialty || '',
+            avgWaitMin: data.avgWaitMin || 15,
+            avgConsultationMin: data.avgConsultationMin || 12,
+            currentToken: data.currentToken || {
+              token: '---',
+              patientName: 'N/A',
+              status: 'Idle',
+            },
+            waitingList: data.waitingList || [],
+            waiting: data.waiting ?? data.waitingList?.length ?? 0,
+            servedToday: data.servedToday || 0,
+            noShowToday: data.noShowToday || 0,
+            isHeld: Boolean(data.isHeld),
+            isEnded: Boolean(data.isEnded),
+            history: [],
+          },
+        }))
+      } catch (error) {
+        console.error(`Failed to fetch queue for doctor ${doctorId}:`, error)
+        // Fallback to local structure if endpoint is not populated yet
+        const currentDoc = doctors.find((d) => (d._id || d.id) === doctorId)
+        setQueueStates((prev) => ({
+          ...prev,
+          [doctorId]: prev[doctorId] || buildInitialQueueState(currentDoc),
+        }))
+      } finally {
+        setLoadingQueue(false)
+      }
+    }
+
+    loadQueueData(selectedDoctorId)
+  }, [selectedDoctorId, doctors])
+
+  const selectedDoctor = useMemo(
+    () => doctors.find((d) => (d._id || d.id) === selectedDoctorId),
+    [doctors, selectedDoctorId]
+  )
 
   const queue =
-    queueStates[selectedDoctorId] || buildInitialQueueState(selectedDoctorId)
+    queueStates[selectedDoctorId] || buildInitialQueueState(selectedDoctor)
 
   const updateQueue = (updater) => {
     setQueueStates((prev) => ({
       ...prev,
       [selectedDoctorId]: updater(
-        prev[selectedDoctorId] || buildInitialQueueState(selectedDoctorId)
+        prev[selectedDoctorId] || buildInitialQueueState(selectedDoctor)
       ),
     }))
   }
 
   const handleSelectDoctor = (id) => {
     setSelectedDoctorId(id)
-    setQueueStates((prev) =>
-      prev[id] ? prev : { ...prev, [id]: buildInitialQueueState(id) }
-    )
-    setSearchQuery('') // Clear search when changing doctors
+    setSearchQuery('')
   }
 
-  const handleNext = () => {
+  // --- Queue Actions with API Integration ---
+
+  const handleNext = async () => {
     if (queue.isEnded) return
     if (queue.isHeld) {
       toast.error('Queue is on hold. Resume to continue.')
@@ -117,6 +206,7 @@ export default function QueueManagement() {
       return
     }
 
+    // Optimistic local UI update
     updateQueue((q) => {
       const [next, ...rest] = q.waitingList
       return {
@@ -132,9 +222,17 @@ export default function QueueManagement() {
         servedToday: q.servedToday + 1,
       }
     })
+
+    try {
+      await api.post(`/clinic/doctors/${selectedDoctorId}/queue/next`)
+    } catch (error) {
+      console.error('Failed to update queue next on server:', error)
+      toast.error('Server sync failed. Restoring queue...')
+      handleUndo()
+    }
   }
 
-  const handleSkip = () => {
+  const handleSkip = async () => {
     if (queue.isEnded) return
     if (queue.isHeld) {
       toast.error('Queue is on hold. Resume to continue.')
@@ -145,6 +243,7 @@ export default function QueueManagement() {
       return
     }
 
+    // Optimistic local UI update
     updateQueue((q) => {
       const [next, ...rest] = q.waitingList
       return {
@@ -161,13 +260,22 @@ export default function QueueManagement() {
       }
     })
     toast.success('Patient skipped')
+
+    try {
+      await api.post(`/clinic/doctors/${selectedDoctorId}/queue/skip`)
+    } catch (error) {
+      console.error('Failed to update queue skip on server:', error)
+      toast.error('Server sync failed. Restoring queue...')
+      handleUndo()
+    }
   }
 
-  const handleUndo = () => {
+  const handleUndo = async () => {
     if (queue.history.length === 0) {
       toast.error('Nothing to undo.')
       return
     }
+
     updateQueue((q) => {
       const prevSnapshot = q.history[q.history.length - 1]
       return {
@@ -176,20 +284,45 @@ export default function QueueManagement() {
         history: q.history.slice(0, -1),
       }
     })
+
+    try {
+      await api.post(`/clinic/doctors/${selectedDoctorId}/queue/undo`)
+    } catch (error) {
+      console.error('Failed to trigger undo on server:', error)
+    }
   }
 
-  const handleToggleHold = () => {
-    updateQueue((q) => ({ ...q, isHeld: !q.isHeld }))
+  const handleToggleHold = async () => {
+    const nextHoldState = !queue.isHeld
+    updateQueue((q) => ({ ...q, isHeld: nextHoldState }))
+
+    try {
+      await api.post(`/clinic/doctors/${selectedDoctorId}/queue/hold`, {
+        isHeld: nextHoldState,
+      })
+    } catch (error) {
+      console.error('Failed to update hold state on server:', error)
+      updateQueue((q) => ({ ...q, isHeld: !nextHoldState }))
+      toast.error('Failed to toggle queue hold state')
+    }
   }
 
-  const handleEndQueue = () => {
+  const handleEndQueue = async () => {
     if (queue.isEnded) return
     const confirmed = window.confirm(
       `End today's queue for ${queue.doctorName}? This cannot be undone.`
     )
     if (!confirmed) return
+
     updateQueue((q) => ({ ...q, isEnded: true, isHeld: false }))
     toast.success('Queue ended for today')
+
+    try {
+      await api.post(`/clinic/doctors/${selectedDoctorId}/queue/end`)
+    } catch (error) {
+      console.error('Failed to end queue on server:', error)
+      toast.error('Failed to end queue on server')
+    }
   }
 
   // Calculation helpers
@@ -219,7 +352,6 @@ export default function QueueManagement() {
     })
   }, [queue.waitingList, queue.avgConsultationMin, currentTime])
 
-  // Filter list by token or patient name
   const filteredPatients = useMemo(() => {
     if (!searchQuery.trim()) return waitingPatients
 
@@ -238,6 +370,34 @@ export default function QueueManagement() {
     { key: 'noShow', label: 'No Show Today', value: queue.noShowToday, color: 'text-red-500 dark:text-red-400' },
   ]
 
+  if (loadingDoctors) {
+    return (
+      <ClinicDashboardLayout>
+        <div className="min-h-[400px] flex items-center justify-center">
+          <div className="flex items-center gap-3 text-gray-500 dark:text-gray-400">
+            <Loader2 className="animate-spin" size={24} />
+            <span className="text-sm font-medium">Loading doctors...</span>
+          </div>
+        </div>
+      </ClinicDashboardLayout>
+    )
+  }
+
+  if (doctors.length === 0 || !selectedDoctor) {
+    return (
+      <ClinicDashboardLayout>
+        <div className="min-h-[400px] flex flex-col items-center justify-center text-center p-6">
+          <p className="text-base font-semibold text-gray-700 dark:text-gray-200 mb-1">
+            No Doctors Found
+          </p>
+          <p className="text-xs text-gray-400 dark:text-gray-500">
+            Please register or assign doctors to manage clinic queues.
+          </p>
+        </div>
+      </ClinicDashboardLayout>
+    )
+  }
+
   return (
     <ClinicDashboardLayout
       headerRight={{
@@ -255,7 +415,7 @@ export default function QueueManagement() {
           <>
             {showSelector && (
               <DoctorSelector
-                doctorIds={availableIds}
+                doctors={availableDoctors}
                 selectedDoctorId={selectedDoctorId}
                 onSelect={handleSelectDoctor}
                 open={selectorOpen}
@@ -275,13 +435,15 @@ export default function QueueManagement() {
     >
       {/* Mobile header + selector */}
       <div className="lg:hidden mb-4">
-        <h1 className="text-lg font-bold text-gray-900 dark:text-white">Queue Management</h1>
+        <h1 className="text-lg font-bold text-gray-900 dark:text-white">
+          Queue Management
+        </h1>
         <p className="text-xs text-gray-400 dark:text-gray-500 mb-3">
           Manage your clinic queue in real-time
         </p>
         {showSelector && (
           <DoctorSelector
-            doctorIds={availableIds}
+            doctors={availableDoctors}
             selectedDoctorId={selectedDoctorId}
             onSelect={handleSelectDoctor}
             open={selectorOpen}
@@ -301,14 +463,19 @@ export default function QueueManagement() {
         >
           <Info size={16} className="shrink-0" />
           {queue.isEnded
-            ? "This queue has ended for today."
+            ? 'This queue has ended for today.'
             : 'Queue is on hold — patients are not being called.'}
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
         {/* Current Token */}
-        <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5">
+        <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5 relative">
+          {loadingQueue && (
+            <div className="absolute inset-0 bg-white/50 dark:bg-gray-900/50 backdrop-blur-[1px] flex items-center justify-center z-10 rounded-2xl">
+              <Loader2 className="animate-spin text-brand-600" size={20} />
+            </div>
+          )}
           <div className="flex items-center justify-between mb-4">
             <p className="text-sm font-semibold text-gray-500 dark:text-gray-400">
               Current Token
@@ -328,7 +495,12 @@ export default function QueueManagement() {
         </div>
 
         {/* Queue Summary */}
-        <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5">
+        <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5 relative">
+          {loadingQueue && (
+            <div className="absolute inset-0 bg-white/50 dark:bg-gray-900/50 backdrop-blur-[1px] flex items-center justify-center z-10 rounded-2xl">
+              <Loader2 className="animate-spin text-brand-600" size={20} />
+            </div>
+          )}
           <p className="text-sm font-semibold text-gray-500 dark:text-gray-400 mb-4">
             Queue Summary
           </p>
@@ -353,7 +525,12 @@ export default function QueueManagement() {
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-4">
         {/* Waiting List Section */}
-        <div className="lg:col-span-2 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5">
+        <div className="lg:col-span-2 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5 relative">
+          {loadingQueue && (
+            <div className="absolute inset-0 bg-white/50 dark:bg-gray-900/50 backdrop-blur-[1px] flex items-center justify-center z-10 rounded-2xl">
+              <Loader2 className="animate-spin text-brand-600" size={20} />
+            </div>
+          )}
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
             <p className="text-sm font-semibold text-gray-700 dark:text-gray-200">
               Waiting List
@@ -446,7 +623,7 @@ export default function QueueManagement() {
           <div className="space-y-2.5">
             <button
               onClick={handleNext}
-              disabled={queue.isEnded || queue.isHeld}
+              disabled={queue.isEnded || queue.isHeld || loadingQueue}
               className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl text-sm font-semibold bg-brand-600 hover:bg-brand-700 disabled:bg-gray-200 disabled:text-gray-400 dark:disabled:bg-gray-800 text-white transition-colors"
             >
               Next Token
@@ -455,7 +632,7 @@ export default function QueueManagement() {
 
             <button
               onClick={handleUndo}
-              disabled={queue.history.length === 0}
+              disabled={queue.history.length === 0 || loadingQueue}
               className="w-full flex items-center justify-between px-4 py-3 rounded-xl text-sm font-semibold bg-gray-100 hover:bg-gray-200 disabled:bg-gray-50 disabled:text-gray-300 dark:bg-gray-800 dark:hover:bg-gray-700 dark:disabled:bg-gray-800/50 text-gray-700 dark:text-gray-200 transition-colors"
             >
               <span className="flex items-center gap-2">
@@ -469,15 +646,27 @@ export default function QueueManagement() {
               )}
             </button>
 
-            <ActionButton icon={SkipForward} label="Skip Token" tone="blue" onClick={handleSkip} disabled={queue.isEnded || queue.isHeld} />
+            <ActionButton
+              icon={SkipForward}
+              label="Skip Token"
+              tone="blue"
+              onClick={handleSkip}
+              disabled={queue.isEnded || queue.isHeld || loadingQueue}
+            />
             <ActionButton
               icon={queue.isHeld ? PlayCircle : PauseCircle}
               label={queue.isHeld ? 'Resume Queue' : 'Hold Queue'}
               tone="orange"
               onClick={handleToggleHold}
-              disabled={queue.isEnded}
+              disabled={queue.isEnded || loadingQueue}
             />
-            <ActionButton icon={Square} label="End Queue" tone="red" onClick={handleEndQueue} disabled={queue.isEnded} />
+            <ActionButton
+              icon={Square}
+              label="End Queue"
+              tone="red"
+              onClick={handleEndQueue}
+              disabled={queue.isEnded || loadingQueue}
+            />
           </div>
         </div>
       </div>
@@ -492,8 +681,8 @@ export default function QueueManagement() {
   )
 }
 
-function DoctorSelector({ doctorIds, selectedDoctorId, onSelect, open, setOpen, fullWidth }) {
-  const selected = mockClinicQueues[selectedDoctorId] || {}
+function DoctorSelector({ doctors, selectedDoctorId, onSelect, open, setOpen, fullWidth }) {
+  const selected = doctors.find((d) => (d._id || d.id) === selectedDoctorId) || {}
 
   return (
     <div className={`relative ${fullWidth ? 'w-full' : ''}`}>
@@ -504,7 +693,7 @@ function DoctorSelector({ doctorIds, selectedDoctorId, onSelect, open, setOpen, 
         }`}
       >
         <span className="truncate">
-          {selected.doctorName} — {selected.specialty}
+          {selected.name || selected.doctorName || 'Select Doctor'} — {selected.specialty || ''}
         </span>
         <ChevronDown size={15} className="text-gray-400 shrink-0" />
       </button>
@@ -513,8 +702,8 @@ function DoctorSelector({ doctorIds, selectedDoctorId, onSelect, open, setOpen, 
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
           <div className="absolute right-0 mt-2 w-64 rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft z-20 overflow-hidden">
-            {doctorIds.map((id) => {
-              const doc = mockClinicQueues[id] || {}
+            {doctors.map((doc) => {
+              const id = doc._id || doc.id
               const isSelected = id === selectedDoctorId
               return (
                 <button
@@ -529,9 +718,9 @@ function DoctorSelector({ doctorIds, selectedDoctorId, onSelect, open, setOpen, 
                       : 'text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800'
                   }`}
                 >
-                  <span className="truncate">{doc.doctorName}</span>
+                  <span className="truncate">{doc.name || doc.doctorName}</span>
                   <span className="text-xs text-gray-400 shrink-0 ml-2">
-                    {doc.waiting} waiting
+                    {doc.specialty}
                   </span>
                 </button>
               )
