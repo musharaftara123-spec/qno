@@ -1,66 +1,84 @@
 import React, { createContext, useContext, useEffect, useState } from 'react'
-import { mockClinicAccounts } from '../services/clinicMockData.js'
+import api, { setAccessToken } from '../services/api.js'
 
-const STORAGE_KEY = 'clinicQueue_clinicAuth'
 const ClinicAuthContext = createContext(null)
+
+const USE_MOCKS = import.meta.env.VITE_USE_MOCKS === 'true'
+
+// ⚠️ DEV/MOCK ONLY. This whole function is skipped once USE_MOCKS is
+// false — real login() below talks to the actual backend instead.
+async function mockLoginCheck(email, password) {
+  const { mockClinicAccounts } = await import('../services/clinicMockData.js')
+  await new Promise((resolve) => setTimeout(resolve, 500))
+
+  const account = mockClinicAccounts.find(
+    (acc) => acc.email.toLowerCase() === email.trim().toLowerCase()
+  )
+  if (!account || account.password !== password) {
+    throw new Error('Invalid email or password')
+  }
+  return {
+    userId: account.userId,
+    name: account.name,
+    email: account.email,
+    role: account.role,
+    assignedDoctorIds: account.assignedDoctorIds,
+  }
+}
 
 export function ClinicAuthProvider({ children }) {
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
 
-  // Restore session on load (e.g. page refresh)
+  // On app load, try to silently restore a session using the httpOnly
+  // refresh cookie (JS never touches the token itself — the browser just
+  // sends it automatically because api.js has withCredentials: true).
+  // If there's no valid cookie, this fails quietly and the user is
+  // treated as logged out, same as any first visit.
   useEffect(() => {
-    try {
-      const stored = sessionStorage.getItem(STORAGE_KEY)
-      if (stored) setUser(JSON.parse(stored))
-    } catch {
-      // corrupted/unavailable storage — treat as logged out
-    } finally {
-      setLoading(false)
+    async function restoreSession() {
+      if (USE_MOCKS) {
+        // No real backend to refresh against in mock mode — nothing to restore.
+        setLoading(false)
+        return
+      }
+      try {
+        const { data } = await api.post('/clinic/auth/refresh')
+        setAccessToken(data.accessToken)
+        setUser(data.user)
+      } catch {
+        setAccessToken(null)
+        setUser(null)
+      } finally {
+        setLoading(false)
+      }
     }
+    restoreSession()
   }, [])
 
-  // Mock login — checks against clinicMockAccounts.
-  // TODO (backend phase): replace with a real POST /api/auth/clinic-login
-  // call that verifies a hashed password server-side and returns a JWT.
-  // The client should never again compare plaintext passwords once that
-  // exists — this function's insides get swapped, not its signature.
   const login = async (email, password) => {
-    await new Promise((resolve) => setTimeout(resolve, 500)) // simulate network
-
-    const account = mockClinicAccounts.find(
-      (acc) => acc.email.toLowerCase() === email.trim().toLowerCase()
-    )
-
-    if (!account || account.password !== password) {
-      throw new Error('Invalid email or password')
+    if (USE_MOCKS) {
+      const sessionUser = await mockLoginCheck(email, password)
+      setUser(sessionUser)
+      return sessionUser
     }
 
-    const sessionUser = {
-      userId: account.userId,
-      name: account.name,
-      email: account.email,
-      role: account.role,
-      assignedDoctorIds: account.assignedDoctorIds,
-    }
-
-    setUser(sessionUser)
-    try {
-      sessionStorage.setItem(STORAGE_KEY, JSON.stringify(sessionUser))
-    } catch {
-      // non-critical if storage is unavailable — user stays logged in for this tab session via state
-    }
-
-    return sessionUser
+    const { data } = await api.post('/clinic/auth/login', { email, password })
+    setAccessToken(data.accessToken)
+    setUser(data.user)
+    return data.user
   }
 
-  const logout = () => {
-    setUser(null)
-    try {
-      sessionStorage.removeItem(STORAGE_KEY)
-    } catch {
-      // no-op
+  const logout = async () => {
+    if (!USE_MOCKS) {
+      try {
+        await api.post('/clinic/auth/logout') // revokes the refresh token server-side
+      } catch {
+        // even if this fails, still clear local state below
+      }
     }
+    setAccessToken(null)
+    setUser(null)
   }
 
   return (
