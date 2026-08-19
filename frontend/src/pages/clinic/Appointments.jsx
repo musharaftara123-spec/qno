@@ -12,11 +12,12 @@ import {
   MessageCircleMore,
   Copy,
   CheckCircle2,
+  Loader2,
 } from 'lucide-react'
 import ClinicDashboardLayout from '../../components/clinic/ClinicDashboardLayout.jsx'
 import PatientQuickActions from '../../components/clinic/PatientQuickActions.jsx'
 import { useClinicAuth } from '../../contexts/ClinicAuthContext.jsx'
-import { mockDoctorsByClinic, createMockAppointment } from '../../services/mockData.js'
+import api from '../../services/api.js'
 
 const GENDERS = ['Male', 'Female', 'Other']
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
@@ -49,10 +50,9 @@ function formatDateLabel(date, isFirst) {
 export default function Appointments() {
   const { user } = useClinicAuth()
   const clinicId = user?.clinicId || 'clinic_1'
-  
-  const doctors = useMemo(() => {
-    return mockDoctorsByClinic[clinicId]?.doctors || []
-  }, [clinicId])
+
+  const [doctors, setDoctors] = useState([])
+  const [loadingDoctors, setLoadingDoctors] = useState(true)
 
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
@@ -65,7 +65,27 @@ export default function Appointments() {
   const [lastBooked, setLastBooked] = useState(null)
   const [recent, setRecent] = useState([])
 
-  // Ensure default doctor is selected when list loads
+  useEffect(() => {
+    const loadDoctors = async () => {
+      try {
+        setLoadingDoctors(true)
+        const { data } = await api.get('/clinic/doctors')
+        setDoctors(Array.isArray(data) ? data : data.doctors || [])
+      } catch (error) {
+        console.error('Failed to load doctors:', error)
+        toast.error(
+          error.response?.data?.message ||
+          error.message ||
+          'Failed to load doctors'
+        )
+      } finally {
+        setLoadingDoctors(false)
+      }
+    }
+
+    loadDoctors()
+  }, [])
+
   useEffect(() => {
     if (doctors.length > 0 && !doctorId) {
       setDoctorId(doctors[0]._id)
@@ -97,26 +117,37 @@ export default function Appointments() {
 
   const isValidPhone = /^[6-9]\d{9}$/.test(phone)
   const isValidAge = age !== '' && !isNaN(age) && Number(age) > 0 && Number(age) < 120
-  
-  const canSubmit =
-    name.trim().length >= 2 &&
-    isValidPhone &&
-    isValidAge &&
-    gender &&
-    doctorId &&
-    selectedSession &&
-    chosenDate &&
-    !submitting
 
   const handleSubmit = async () => {
-    if (!canSubmit) {
-      toast.error(
-        !selectedSession
-          ? 'Please select a session for the doctor first.'
-          : 'Please fill in all fields correctly.'
-      )
+    if (!name.trim() || name.trim().length < 2) {
+      toast.error('Please enter a valid patient name.')
       return
     }
+    if (!isValidPhone) {
+      toast.error('Please enter a valid 10-digit phone number.')
+      return
+    }
+    if (!isValidAge) {
+      toast.error('Please enter a valid age.')
+      return
+    }
+    if (!gender) {
+      toast.error('Please select a gender.')
+      return
+    }
+    if (!doctorId) {
+      toast.error('Please select a doctor.')
+      return
+    }
+    if (!selectedSession) {
+      toast.error('Please select a session for the doctor.')
+      return
+    }
+    if (!chosenDate) {
+      toast.error('Please select an appointment date.')
+      return
+    }
+
     setSubmitting(true)
 
     const appointmentDate = chosenDate.toLocaleDateString('en-GB', {
@@ -126,34 +157,39 @@ export default function Appointments() {
     })
 
     try {
-      await new Promise((r) => setTimeout(r, 500))
-
-      const appointment = createMockAppointment({
-        clinicId,
-        doctorId,
-        patientName: name.trim(),
-        patientPhone: phone.trim(),
-        patientAge: Number(age),
-        patientGender: gender,
-        bookedBy: 'receptionist',
-        slotDay: selectedSession.day,
-        slotQueueLength: selectedSession.queueLength,
-        appointmentDate,
-      })
+      const { data: appointment } = await api.post(
+        '/clinic/appointments',
+        {
+          doctorId,
+          patientName: name.trim(),
+          patientPhone: phone.trim(),
+          patientAge: Number(age),
+          patientGender: gender,
+          slotDay: selectedSession.day,
+          appointmentDate,
+        }
+      )
 
       setLastBooked(appointment)
       setRecent((prev) => [appointment, ...prev].slice(0, 8))
-      toast.success(`Appointment booked · Patient ID ${appointment.patientId}`)
 
-      // Reset form fields
+      toast.success(
+        `Appointment booked · Patient ID ${appointment.patientId}`
+      )
+
       setName('')
       setPhone('')
       setAge('')
       setGender('')
       setSelectedSession(null)
       setSelectedDateIdx(0)
-    } catch (err) {
-      toast.error(err?.message || 'Could not book this appointment. Please try again.')
+    } catch (error) {
+      console.error('Booking error:', error)
+      toast.error(
+        error.response?.data?.message ||
+        error.message ||
+        'Could not book this appointment.'
+      )
     } finally {
       setSubmitting(false)
     }
@@ -208,7 +244,7 @@ export default function Appointments() {
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="Full name"
-                className="w-full h-11 px-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm"
+                className="w-full h-11 px-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm text-gray-900 dark:text-white"
               />
             </Field>
 
@@ -220,7 +256,7 @@ export default function Appointments() {
                   onChange={(e) => setPhone(e.target.value.replace(/\D/g, ''))}
                   maxLength={10}
                   placeholder="10-digit mobile"
-                  className="w-full h-11 pl-9 pr-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm"
+                  className="w-full h-11 pl-9 pr-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm text-gray-900 dark:text-white"
                 />
               </div>
             </Field>
@@ -233,7 +269,7 @@ export default function Appointments() {
                   value={age}
                   onChange={(e) => setAge(e.target.value)}
                   placeholder="Age"
-                  className="w-full h-11 pl-9 pr-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm"
+                  className="w-full h-11 pl-9 pr-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm text-gray-900 dark:text-white"
                 />
               </div>
             </Field>
@@ -245,11 +281,11 @@ export default function Appointments() {
                     key={g}
                     type="button"
                     onClick={() => setGender(g)}
-                    className="flex items-center gap-1.5"
+                    className="flex items-center gap-1.5 cursor-pointer"
                   >
                     <span
                       className={`w-4 h-4 rounded-full border-2 flex items-center justify-center ${
-                        gender === g ? 'bg-brand-600 border-brand-600' : 'border-gray-300'
+                        gender === g ? 'bg-brand-600 border-brand-600' : 'border-gray-300 dark:border-gray-600'
                       }`}
                     >
                       {gender === g && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
@@ -266,14 +302,17 @@ export default function Appointments() {
                 <select
                   value={doctorId}
                   onChange={(e) => handleDoctorChange(e.target.value)}
-                  className="w-full h-11 pl-9 pr-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm appearance-none"
+                  disabled={loadingDoctors}
+                  className="w-full h-11 pl-9 pr-3 rounded-xl bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-transparent focus:border-brand-500 focus:outline-none text-sm text-gray-900 dark:text-white appearance-none"
                 >
-                  {doctors.length === 0 ? (
+                  {loadingDoctors ? (
+                    <option value="">Loading doctors...</option>
+                  ) : doctors.length === 0 ? (
                     <option value="">No doctors available</option>
                   ) : (
                     doctors.map((d) => (
                       <option key={d._id} value={d._id}>
-                        {d.name} — {d.specialty}
+                        {d.name} — {d.specialty} {!d.active ? '(On Leave)' : ''}
                       </option>
                     ))
                   )}
@@ -287,7 +326,12 @@ export default function Appointments() {
               Session
             </label>
 
-            {sessions.length === 0 ? (
+            {loadingDoctors ? (
+              <div className="flex items-center justify-center py-6 text-xs text-gray-400 gap-2">
+                <Loader2 size={16} className="animate-spin" />
+                Fetching doctor sessions...
+              </div>
+            ) : sessions.length === 0 ? (
               <p className="text-xs text-gray-400">
                 This doctor has no availability configured.
               </p>
@@ -304,7 +348,7 @@ export default function Appointments() {
                       className={`cursor-pointer rounded-2xl border p-3.5 transition-all ${
                         isSelected
                           ? 'bg-brand-50/60 dark:bg-brand-900/30 border-brand-500 dark:border-brand-600 ring-2 ring-brand-500/20'
-                          : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 hover:border-gray-300'
+                          : 'bg-white dark:bg-gray-900 border-gray-200 dark:border-gray-800 hover:border-gray-300 dark:hover:border-gray-700'
                       }`}
                     >
                       <div className="flex items-center justify-between">
@@ -337,7 +381,9 @@ export default function Appointments() {
                         </div>
                         <div className="flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-md">
                           <Users size={12} />
-                          <span>{session.queueLength} booked</span>
+                          <span>
+                            {session.bookedSlots || 0}/{session.totalSlots || 0} booked
+                          </span>
                         </div>
                       </div>
                     </div>
@@ -358,7 +404,7 @@ export default function Appointments() {
                     key={d.toISOString()}
                     type="button"
                     onClick={() => setSelectedDateIdx(idx)}
-                    className={`h-9 px-3 rounded-xl border text-xs font-medium transition-colors ${
+                    className={`h-9 px-3 rounded-xl border text-xs font-medium transition-colors cursor-pointer ${
                       selectedDateIdx === idx
                         ? 'bg-brand-600 border-brand-600 text-white'
                         : 'bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-transparent text-gray-600 dark:text-gray-300'
@@ -374,8 +420,8 @@ export default function Appointments() {
           <button
             type="button"
             onClick={handleSubmit}
-            disabled={!canSubmit}
-            className="w-full h-12 mt-5 rounded-2xl bg-brand-600 hover:bg-brand-700 disabled:bg-gray-200 disabled:text-gray-400 dark:disabled:bg-gray-800 text-white font-semibold transition-colors"
+            disabled={submitting}
+            className="w-full h-12 mt-5 rounded-2xl bg-brand-600 hover:bg-brand-700 disabled:bg-gray-200 disabled:text-gray-400 dark:disabled:bg-gray-800 text-white font-semibold transition-colors cursor-pointer disabled:cursor-not-allowed"
           >
             {submitting ? 'Booking...' : 'Book Appointment'}
           </button>
@@ -399,7 +445,7 @@ export default function Appointments() {
                 <button
                   type="button"
                   onClick={copyLink}
-                  className="h-9 px-3 rounded-lg bg-white dark:bg-gray-900 border border-green-200 dark:border-green-800/40 text-green-700 dark:text-green-400"
+                  className="h-9 px-3 rounded-lg bg-white dark:bg-gray-900 border border-green-200 dark:border-green-800/40 text-green-700 dark:text-green-400 cursor-pointer"
                 >
                   <Copy size={14} />
                 </button>
@@ -422,7 +468,7 @@ export default function Appointments() {
                 const doctor = doctors.find((d) => String(d._id) === String(appt.doctorId))
                 return (
                   <div
-                    key={appt.appointmentId}
+                    key={appt.appointmentId || appt._id}
                     className="flex flex-col gap-2 pb-3 border-b border-gray-50 dark:border-gray-800 last:border-0 last:pb-0"
                   >
                     <div className="flex items-center gap-3">

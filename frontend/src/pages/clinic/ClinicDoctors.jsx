@@ -126,8 +126,8 @@ function getNextAvailableSession(availability = []) {
 }
 
 function weeklyTotals(availability = []) {
-  const totalSlots = availability.reduce((sum, s) => sum + (s.totalSlots || 0), 0)
-  const bookedSlots = availability.reduce((sum, s) => sum + (s.bookedSlots || 0), 0)
+  const totalSlots = availability.reduce((sum, s) => sum + (Number(s.totalSlots) || 0), 0)
+  const bookedSlots = availability.reduce((sum, s) => sum + (Number(s.bookedSlots) || 0), 0)
   const occupancy = totalSlots > 0 ? Math.round((bookedSlots / totalSlots) * 100) : 0
   return { totalSlots, bookedSlots, occupancy }
 }
@@ -150,7 +150,7 @@ function DoctorFormModal({ mode = 'add', initial, onClose, onSubmit }) {
       specialty: form.specialty.trim(),
       qualification: form.qualification.trim(),
       phone: form.phone.trim(),
-      fee: form.fee === '' ? undefined : Number(form.fee) || 0,
+      fee: form.fee === '' ? 0 : Number(form.fee) || 0,
       totalSlots: Number(form.totalSlots) || 1,
     })
     onClose()
@@ -238,7 +238,7 @@ function DoctorFormModal({ mode = 'add', initial, onClose, onSubmit }) {
 
           {mode === 'add' && (
             <p className="text-[11px] text-gray-400 leading-snug">
-              You can set up this doctor's day-wise weekly schedule (which days, what time, how many slots) right after adding them — just tap on their card.
+              You can set up this doctor's day-wise weekly schedule right after adding them — just tap on their card.
             </p>
           )}
 
@@ -370,6 +370,8 @@ function DoctorSlotsDrawer({ doctor, onClose, onSave }) {
   const [sessions, setSessions] = useState(() =>
     sortByWeekday(doctor.availability || []).map((s, i) => ({
       ...s,
+      totalSlots: s.totalSlots ?? doctor.totalSlots ?? 10,
+      bookedSlots: s.bookedSlots ?? 0,
       _key: `${doctor._id || doctor.id}_${i}_${Date.now()}`,
     }))
   )
@@ -383,7 +385,13 @@ function DoctorSlotsDrawer({ doctor, onClose, onSave }) {
     setSessions((prev) =>
       prev.map((s) =>
         s._key === key
-          ? { ...s, [field]: field === 'totalSlots' || field === 'bookedSlots' ? Number(value) || 0 : value }
+          ? {
+              ...s,
+              [field]:
+                field === 'totalSlots' || field === 'bookedSlots'
+                  ? value === '' ? '' : Number(value)
+                  : value,
+            }
           : s
       )
     )
@@ -394,11 +402,22 @@ function DoctorSlotsDrawer({ doctor, onClose, onSave }) {
   const addSession = () =>
     setSessions((prev) => [
       ...prev,
-      { day: 'Monday', start: '9:00 AM', end: '12:00 PM', totalSlots: 10, bookedSlots: 0, _key: `new_${Date.now()}_${Math.random()}` },
+      {
+        day: 'Monday',
+        start: '9:00 AM',
+        end: '12:00 PM',
+        totalSlots: 10,
+        bookedSlots: 0,
+        _key: `new_${Date.now()}_${Math.random()}`,
+      },
     ])
 
   const handleSave = () => {
-    const clean = sessions.map(({ _key, ...rest }) => rest)
+    const clean = sessions.map(({ _key, ...rest }) => ({
+      ...rest,
+      totalSlots: rest.totalSlots === '' ? 0 : Number(rest.totalSlots) || 0,
+      bookedSlots: rest.bookedSlots === '' ? 0 : Number(rest.bookedSlots) || 0,
+    }))
     onSave(doctor._id || doctor.id, clean)
     onClose()
   }
@@ -463,8 +482,11 @@ function DoctorSlotsDrawer({ doctor, onClose, onSave }) {
             </p>
           ) : (
             sessions.map((s) => {
-              const full = (s.bookedSlots || 0) >= (s.totalSlots || 0)
-              const pct = s.totalSlots ? Math.min(100, Math.round(((s.bookedSlots || 0) / s.totalSlots) * 100)) : 0
+              const currentTotal = Number(s.totalSlots) || 0
+              const currentBooked = Number(s.bookedSlots) || 0
+              const full = currentBooked >= currentTotal && currentTotal > 0
+              const pct = currentTotal > 0 ? Math.min(100, Math.round((currentBooked / currentTotal) * 100)) : 0
+
               return (
                 <div key={s._key} className="rounded-xl border border-gray-100 dark:border-gray-800 p-3">
                   <div className="flex flex-wrap items-center gap-2">
@@ -500,7 +522,7 @@ function DoctorSlotsDrawer({ doctor, onClose, onSave }) {
                       <input
                         type="number"
                         min={0}
-                        value={s.totalSlots}
+                        value={s.totalSlots ?? ''}
                         onChange={(e) => updateSession(s._key, 'totalSlots', e.target.value)}
                         className="h-8 w-16 px-2 rounded-lg border border-gray-200 dark:border-gray-700 bg-transparent text-xs text-gray-900 dark:text-white outline-none focus:border-brand-500"
                       />
@@ -522,7 +544,7 @@ function DoctorSlotsDrawer({ doctor, onClose, onSave }) {
                       />
                     </div>
                     <span className={`text-[10px] font-medium ${full ? 'text-red-500' : 'text-gray-400'}`}>
-                      {s.bookedSlots || 0}/{s.totalSlots || 0} booked today
+                      {currentBooked}/{currentTotal} booked today
                     </span>
                   </div>
                 </div>
@@ -563,10 +585,10 @@ export default function ClinicDoctors() {
   const [appointments, setAppointments] = useState({})
   const [loading, setLoading] = useState(true)
   const [query, setQuery] = useState('')
-  const [statusFilter, setStatusFilter] = useState('all') // all | active | leave
+  const [statusFilter, setStatusFilter] = useState('all')
   const [reportDoctorId, setReportDoctorId] = useState(null)
   const [slotsDoctorId, setSlotsDoctorId] = useState(null)
-  const [formModal, setFormModal] = useState(null) // { mode: 'add' | 'edit', doctor?: Doctor }
+  const [formModal, setFormModal] = useState(null)
 
   const fetchData = async () => {
     try {
@@ -672,29 +694,48 @@ export default function ClinicDoctors() {
     }
   }
 
-  const updateAvailability = async (id, availability) => {
-    try {
-      const response = await api.patch(`/clinic/doctors/${id}`, {
-        availability,
-      })
+const updateAvailability = async (id, availability) => {
+  try {
+    console.log('========== SAVE SCHEDULE ==========')
+    console.log('Doctor ID:', id)
+    console.log('Doctor ID type:', typeof id)
+    console.log('Availability:', availability)
 
-      const updatedDoctor = response.data.doctor || response.data
-
-      setDoctors((prev) =>
-        prev.map((d) => ((d._id || d.id) === id ? updatedDoctor : d))
-      )
-
-      toast.success('Schedule saved')
-    } catch (error) {
-      console.error('Save schedule error:', error)
-      toast.error(
-        error.response?.data?.message ||
-        error.message ||
-        'Failed to save schedule'
-      )
+    if (!id) {
+      toast.error('Doctor ID is missing')
+      return
     }
-  }
 
+    const response = await api.patch(`/clinic/doctors/${id}`, {
+      availability,
+    })
+
+    console.log('SAVE RESPONSE:', response.data)
+
+    const updatedDoctor = response.data.doctor || response.data
+
+    setDoctors((prev) =>
+      prev.map((d) =>
+        String(d._id || d.id) === String(id)
+          ? updatedDoctor
+          : d
+      )
+    )
+
+    toast.success('Schedule saved')
+  } catch (error) {
+    console.error('========== SAVE SCHEDULE ERROR ==========')
+    console.error('Status:', error.response?.status)
+    console.error('Response:', error.response?.data)
+    console.error('Message:', error.message)
+
+    toast.error(
+      error.response?.data?.message ||
+      error.message ||
+      'Failed to save schedule'
+    )
+  }
+}
   const filtered = doctors.filter((d) => {
     const q = query.toLowerCase()
     const matchesQuery =

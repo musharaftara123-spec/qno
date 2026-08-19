@@ -1,4 +1,4 @@
-import mongoose from 'mongoose';
+import mongoose from 'mongoose'
 
 const availabilitySchema = new mongoose.Schema(
   {
@@ -6,67 +6,92 @@ const availabilitySchema = new mongoose.Schema(
       type: String,
       required: true,
     },
+
     start: {
       type: String,
       required: true,
     },
+
     end: {
       type: String,
       required: true,
     },
+
     totalSlots: {
       type: Number,
-      required: true,
-      min: 1,
-      default: 1,
+      default: 0,
+      min: 0,
     },
+
     bookedSlots: {
       type: Number,
-      min: 0,
       default: 0,
+      min: 0,
+    },
+
+    bookedSlots: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
   },
   { _id: false }
-);
+)
 
 const doctorSchema = new mongoose.Schema(
   {
-    clinicId: {
+    clinic: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Clinic',
       required: true,
+      index: true,
     },
+
     name: {
       type: String,
       required: true,
+      trim: true,
     },
-    specialization: {
+
+    specialty: {
       type: String,
       required: true,
+      trim: true,
     },
-    experience: {
-      type: String,
-    },
+
     qualification: {
       type: String,
+      trim: true,
     },
-    fee: {
-      type: Number,
-      required: true,
-    },
+
     phone: {
       type: String,
+      trim: true,
     },
-    email: {
-      type: String,
+
+    fee: {
+      type: Number,
+      default: 0,
+      min: 0,
     },
-    availability: [availabilitySchema],
-    isActive: {
+
+    totalSlots: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+
+    active: {
       type: Boolean,
       default: true,
     },
-  },
-  { timestamps: true }
-);
 
-export default mongoose.model('Doctor', doctorSchema);
+    availability: [availabilitySchema],
+  },
+  {
+    timestamps: true,
+  }
+)
+
+export default mongoose.models.Doctor ||
+  mongoose.model('Doctor', doctorSchema)
