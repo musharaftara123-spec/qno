@@ -16,7 +16,6 @@ import {
 } from 'lucide-react'
 import ClinicDashboardLayout from '../../components/clinic/ClinicDashboardLayout.jsx'
 import PatientQuickActions from '../../components/clinic/PatientQuickActions.jsx'
-import { useClinicAuth } from '../../contexts/ClinicAuthContext.jsx'
 import api from '../../services/api.js'
 
 const GENDERS = ['Male', 'Female', 'Other']
@@ -48,11 +47,10 @@ function formatDateLabel(date, isFirst) {
 }
 
 export default function Appointments() {
-  const { user } = useClinicAuth()
-  const clinicId = user?.clinicId || 'clinic_1'
-
   const [doctors, setDoctors] = useState([])
   const [loadingDoctors, setLoadingDoctors] = useState(true)
+  const [recent, setRecent] = useState([])
+  const [loadingRecent, setLoadingRecent] = useState(true)
 
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
@@ -63,34 +61,45 @@ export default function Appointments() {
   const [selectedDateIdx, setSelectedDateIdx] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [lastBooked, setLastBooked] = useState(null)
-  const [recent, setRecent] = useState([])
 
   useEffect(() => {
-    const loadDoctors = async () => {
-      try {
-        setLoadingDoctors(true)
-        const { data } = await api.get('/clinic/doctors')
-        setDoctors(Array.isArray(data) ? data : data.doctors || [])
-      } catch (error) {
-        console.error('Failed to load doctors:', error)
-        toast.error(
-          error.response?.data?.message ||
-          error.message ||
-          'Failed to load doctors'
-        )
-      } finally {
-        setLoadingDoctors(false)
-      }
-    }
-
     loadDoctors()
+    loadRecentAppointments()
   }, [])
 
-  useEffect(() => {
-    if (doctors.length > 0 && !doctorId) {
-      setDoctorId(doctors[0]._id)
+  const loadDoctors = async () => {
+    try {
+      setLoadingDoctors(true)
+      const { data } = await api.get('/clinic/doctors')
+      const doctorList = Array.isArray(data) ? data : data.doctors || []
+      setDoctors(doctorList)
+      if (doctorList.length > 0) {
+        setDoctorId(doctorList[0]._id)
+      }
+    } catch (error) {
+      console.error('Failed to load doctors:', error)
+      toast.error(
+        error.response?.data?.message ||
+        error.message ||
+        'Failed to load doctors'
+      )
+    } finally {
+      setLoadingDoctors(false)
     }
-  }, [doctors, doctorId])
+  }
+
+  const loadRecentAppointments = async () => {
+    try {
+      setLoadingRecent(true)
+      const { data } = await api.get('/clinic/appointments')
+      const list = Array.isArray(data) ? data : data.appointments || []
+      setRecent(list.slice(0, 8))
+    } catch (error) {
+      console.error('Failed to load recent appointments:', error)
+    } finally {
+      setLoadingRecent(false)
+    }
+  }
 
   const selectedDoctor = useMemo(() => {
     return doctors.find((d) => String(d._id) === String(doctorId)) || null
@@ -120,32 +129,28 @@ export default function Appointments() {
 
   const handleSubmit = async () => {
     if (!name.trim() || name.trim().length < 2) {
-      toast.error('Please enter a valid patient name.')
-      return
+      return toast.error('Please enter a valid patient name.')
     }
     if (!isValidPhone) {
-      toast.error('Please enter a valid 10-digit phone number.')
-      return
+      return toast.error('Please enter a valid 10-digit phone number.')
     }
     if (!isValidAge) {
-      toast.error('Please enter a valid age.')
-      return
+      return toast.error('Please enter a valid age.')
     }
     if (!gender) {
-      toast.error('Please select a gender.')
-      return
+      return toast.error('Please select a gender.')
     }
-    if (!doctorId) {
-      toast.error('Please select a doctor.')
-      return
+    if (!selectedDoctor) {
+      return toast.error('Please select a doctor.')
+    }
+    if (!selectedDoctor.active) {
+      return toast.error('This doctor is currently on leave and cannot accept appointments.')
     }
     if (!selectedSession) {
-      toast.error('Please select a session for the doctor.')
-      return
+      return toast.error('Please select a session for the doctor.')
     }
     if (!chosenDate) {
-      toast.error('Please select an appointment date.')
-      return
+      return toast.error('Please select an appointment date.')
     }
 
     setSubmitting(true)
@@ -166,7 +171,9 @@ export default function Appointments() {
           patientAge: Number(age),
           patientGender: gender,
           slotDay: selectedSession.day,
+          session: `${selectedSession.start} - ${selectedSession.end}`,
           appointmentDate,
+          bookedBy: 'receptionist',
         }
       )
 
@@ -297,8 +304,8 @@ export default function Appointments() {
             </Field>
 
             <Field label="Doctor">
-              <div className="relative">
-                <Stethoscope size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <div className="relative sm:col-span-2">
+                <Stethoscope size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400 z-10" />
                 <select
                   value={doctorId}
                   onChange={(e) => handleDoctorChange(e.target.value)}
@@ -382,7 +389,7 @@ export default function Appointments() {
                         <div className="flex items-center gap-1 text-[11px] font-medium text-amber-600 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-2 py-0.5 rounded-md">
                           <Users size={12} />
                           <span>
-                            {session.bookedSlots || 0}/{session.totalSlots || 0} booked
+                            Capacity: {session.totalSlots || 10}
                           </span>
                         </div>
                       </div>
@@ -458,14 +465,18 @@ export default function Appointments() {
           <p className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">
             Recent Appointments
           </p>
-          {recent.length === 0 ? (
+          {loadingRecent ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 size={18} className="animate-spin text-gray-400" />
+            </div>
+          ) : recent.length === 0 ? (
             <p className="text-xs text-gray-400 text-center py-8">
               Appointments you book here will appear in this list.
             </p>
           ) : (
             <div className="space-y-3">
               {recent.map((appt) => {
-                const doctor = doctors.find((d) => String(d._id) === String(appt.doctorId))
+                const doctor = doctors.find((d) => String(d._id) === String(appt.doctorId || appt.doctor))
                 return (
                   <div
                     key={appt.appointmentId || appt._id}
@@ -486,13 +497,12 @@ export default function Appointments() {
                           {appt.patientName}
                         </p>
                         <p className="text-xs text-gray-400 truncate">
-                          {appt.doctorName} · {appt.appointmentDay} · Token #{appt.tokenNumber}
+                          {appt.doctorName} · {appt.appointmentDate} · Token #{appt.tokenNumber}
                         </p>
                       </div>
                     </div>
                     <div className="pl-12">
                       <PatientQuickActions
-                        clinicId={clinicId}
                         patientName={appt.patientName}
                         patientPhone={appt.patientPhone}
                         patientAge={appt.patientAge}
