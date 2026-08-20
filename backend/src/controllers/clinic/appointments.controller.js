@@ -26,3 +26,14 @@ export const createWalkInAppointment = asyncHandler(async (req, res) => {
   })
   res.status(201).json(appointment)
 })
+
+// PATCH /api/clinic/appointments/:id/payment -> "Online"/"Offline" buttons
+// in the Payments report (DoctorReportDrawer in ClinicDoctors.jsx).
+export const collectAppointmentPayment = asyncHandler(async (req, res) => {
+  const appointment = await appointmentService.collectPayment(
+    req.params.id,
+    req.clinicUser.clinic,
+    req.body.method
+  )
+  res.json(appointment)
+})

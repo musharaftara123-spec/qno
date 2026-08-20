@@ -13,3 +13,7 @@ export const bookAppointmentSchema = z.object({
 })
 
 export const receptionistAppointmentSchema = bookAppointmentSchema.omit({ clinicId: true })
+
+export const collectPaymentSchema = z.object({
+  method: z.enum(['online', 'offline']),
+})

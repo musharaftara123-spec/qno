@@ -13,6 +13,10 @@ const appointmentSchema = new mongoose.Schema(
     clinic: { type: mongoose.Schema.Types.ObjectId, ref: 'Clinic', required: true },
     clinicName: { type: String, required: true },
     doctor: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', required: true },
+    // Plain mirror of `doctor` so frontend pages that read `appt.doctorId`
+    // directly off API responses don't need a populate() just to look the
+    // doctor up (Appointments.jsx, Patients.jsx, ClinicDoctors.jsx all do this).
+    doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', required: true },
     doctorName: { type: String, required: true },
 
     patientName: { type: String, required: true },
@@ -39,6 +43,12 @@ const appointmentSchema = new mongoose.Schema(
       enum: ['pending_payment', 'confirmed', 'waiting', 'your_turn', 'completed', 'cancelled'],
       default: 'pending_payment',
     },
+
+    // How the clinic collected the consultation fee for this visit.
+    // Null until the receptionist/doctor marks it paid via the payments
+    // report (DoctorReportDrawer in ClinicDoctors.jsx).
+    paymentMethod: { type: String, enum: ['online', 'offline'], default: null },
+    paidAt: { type: Date, default: null },
   },
   { timestamps: true }
 )

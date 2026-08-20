@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react'
+import React, { useEffect, useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import {
   Stethoscope,
@@ -42,6 +42,7 @@ const rangeLabel = (range) => RANGES.find((r) => r.key === range)?.label ?? rang
 function isInRange(dateStr, range) {
   if (!dateStr) return false
   const d = new Date(dateStr)
+  if (Number.isNaN(d.getTime())) return false
   const now = new Date()
   const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate())
   const endOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999)
@@ -57,18 +58,27 @@ function isInRange(dateStr, range) {
   return true
 }
 
+// Appointment documents from the API use `createdAt` (a real ISO
+// timestamp from Mongo) for filtering — NOT a `date`/`amount`/`source`
+// shape. `appointmentDate` is a display-only string ('19 Aug 2026') that
+// isn't reliable to re-parse with `new Date()` across browsers, `fee` is
+// the amount, and `bookedBy` ('online' | 'receptionist') is the source.
 function filterAppointments(records, range) {
   return (records || [])
-    .filter((r) => isInRange(r.date, range))
-    .sort((a, b) => new Date(b.date) - new Date(a.date))
+    .filter((r) => isInRange(r.createdAt, range))
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
 }
 
 function summarize(records = []) {
   const totalPatients = records.length
-  const totalAmount = records.reduce((sum, r) => sum + (r.amount || 0), 0)
-  const clinicCount = records.filter((r) => r.source === 'clinic').length
-  const onlineCount = records.filter((r) => r.source === 'online').length
-  return { totalPatients, totalAmount, clinicCount, onlineCount }
+  const totalAmount = records.reduce((sum, r) => sum + (r.fee || 0), 0)
+  const clinicCount = records.filter((r) => r.bookedBy === 'receptionist').length
+  const onlineCount = records.filter((r) => r.bookedBy !== 'receptionist').length
+  const collectedAmount = records
+    .filter((r) => r.paymentMethod)
+    .reduce((sum, r) => sum + (r.fee || 0), 0)
+  const pendingAmount = totalAmount - collectedAmount
+  return { totalPatients, totalAmount, clinicCount, onlineCount, collectedAmount, pendingAmount }
 }
 
 function exportDoctorPdf(doctor, records = [], range) {
@@ -92,12 +102,13 @@ function exportDoctorPdf(doctor, records = [], range) {
   const tableFn = autoTable.default || autoTable
   tableFn(doc, {
     startY: 48,
-    head: [['Date', 'Patient', 'Source', 'Amount']],
+    head: [['Date', 'Patient', 'Source', 'Amount', 'Payment']],
     body: records.map((r) => [
-      r.date ? new Date(r.date).toLocaleDateString('en-IN') : 'N/A',
+      r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-IN') : (r.appointmentDate || 'N/A'),
       r.patientName || 'Unknown',
-      r.source === 'clinic' ? 'Clinic' : 'Online',
-      currency(r.amount),
+      r.bookedBy === 'receptionist' ? 'Clinic' : 'Online',
+      currency(r.fee),
+      r.paymentMethod ? (r.paymentMethod === 'online' ? 'Online' : 'Offline') : 'Pending',
     ]),
     styles: { fontSize: 9 },
     headStyles: { fillColor: [37, 99, 235] },
@@ -254,12 +265,13 @@ function DoctorFormModal({ mode = 'add', initial, onClose, onSubmit }) {
   )
 }
 
-function DoctorReportDrawer({ doctor, records = [], onClose }) {
+function DoctorReportDrawer({ doctor, records = [], onClose, onCollectPayment }) {
   const [range, setRange] = useState('day')
   if (!doctor) return null
 
   const filtered = filterAppointments(records, range)
-  const { totalPatients, totalAmount, clinicCount, onlineCount } = summarize(filtered)
+  const { totalPatients, totalAmount, clinicCount, onlineCount, collectedAmount, pendingAmount } =
+    summarize(filtered)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
@@ -302,23 +314,33 @@ function DoctorReportDrawer({ doctor, records = [], onClose }) {
           </button>
         </div>
 
-        <div className="grid grid-cols-4 gap-2 mb-4">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mb-4">
           <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
             <p className="text-[10px] text-gray-400">Patients</p>
             <p className="text-sm font-bold text-gray-900 dark:text-white">{totalPatients}</p>
           </div>
           <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
-            <p className="text-[10px] text-gray-400">Amount</p>
+            <p className="text-[10px] text-gray-400">Total Fees</p>
             <p className="text-sm font-bold text-gray-900 dark:text-white">{currency(totalAmount)}</p>
           </div>
-          <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
-            <p className="text-[10px] text-gray-400">Clinic</p>
-            <p className="text-sm font-bold text-gray-900 dark:text-white">{clinicCount}</p>
+          <div className="rounded-xl bg-green-50 dark:bg-green-900/20 p-3">
+            <p className="text-[10px] text-green-600 dark:text-green-400">Collected</p>
+            <p className="text-sm font-bold text-green-700 dark:text-green-400">
+              {currency(collectedAmount)}
+            </p>
           </div>
-          <div className="rounded-xl bg-gray-50 dark:bg-gray-800/60 p-3">
-            <p className="text-[10px] text-gray-400">Online</p>
-            <p className="text-sm font-bold text-gray-900 dark:text-white">{onlineCount}</p>
+          <div className="rounded-xl bg-amber-50 dark:bg-amber-900/20 p-3">
+            <p className="text-[10px] text-amber-600 dark:text-amber-400">Pending</p>
+            <p className="text-sm font-bold text-amber-700 dark:text-amber-400">
+              {currency(pendingAmount)}
+            </p>
           </div>
+        </div>
+
+        <div className="flex items-center gap-3 mb-3 text-[11px] text-gray-400">
+          <span>Clinic (walk-in): {clinicCount}</span>
+          <span>·</span>
+          <span>Online: {onlineCount}</span>
         </div>
 
         <div className="overflow-y-auto flex-1 -mx-1 px-1">
@@ -331,32 +353,64 @@ function DoctorReportDrawer({ doctor, records = [], onClose }) {
                   <th className="py-2 pr-2 font-medium">Date</th>
                   <th className="py-2 pr-2 font-medium">Patient</th>
                   <th className="py-2 pr-2 font-medium">Source</th>
-                  <th className="py-2 pr-2 font-medium text-right">Amount</th>
+                  <th className="py-2 pr-2 font-medium text-right">Fee</th>
+                  <th className="py-2 pr-2 font-medium text-right">Payment</th>
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((r) => (
-                  <tr key={r.id || r._id} className="border-b border-gray-50 dark:border-gray-800/60">
-                    <td className="py-2 pr-2 text-gray-600 dark:text-gray-300">
-                      {new Date(r.date).toLocaleDateString('en-IN')}
-                    </td>
-                    <td className="py-2 pr-2 text-gray-900 dark:text-white">{r.patientName}</td>
-                    <td className="py-2 pr-2">
-                      <span
-                        className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                          r.source === 'clinic'
-                            ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                            : 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                        }`}
-                      >
-                        {r.source === 'clinic' ? 'Clinic' : 'Online'}
-                      </span>
-                    </td>
-                    <td className="py-2 pr-2 text-right text-gray-900 dark:text-white font-medium">
-                      {currency(r.amount)}
-                    </td>
-                  </tr>
-                ))}
+                {filtered.map((r) => {
+                  const apptId = r._id || r.id
+                  return (
+                    <tr key={apptId} className="border-b border-gray-50 dark:border-gray-800/60">
+                      <td className="py-2 pr-2 text-gray-600 dark:text-gray-300 whitespace-nowrap">
+                        {r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-IN') : r.appointmentDate}
+                      </td>
+                      <td className="py-2 pr-2 text-gray-900 dark:text-white">{r.patientName}</td>
+                      <td className="py-2 pr-2">
+                        <span
+                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
+                            r.bookedBy === 'receptionist'
+                              ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                              : 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
+                          }`}
+                        >
+                          {r.bookedBy === 'receptionist' ? 'Clinic' : 'Online'}
+                        </span>
+                      </td>
+                      <td className="py-2 pr-2 text-right text-gray-900 dark:text-white font-medium whitespace-nowrap">
+                        {currency(r.fee)}
+                      </td>
+                      <td className="py-2 pr-2 text-right">
+                        {r.paymentMethod ? (
+                          <span
+                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${
+                              r.paymentMethod === 'online'
+                                ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                : 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
+                            }`}
+                          >
+                            Paid · {r.paymentMethod === 'online' ? 'Online' : 'Offline'}
+                          </span>
+                        ) : (
+                          <div className="flex items-center justify-end gap-1">
+                            <button
+                              onClick={() => onCollectPayment(apptId, 'online')}
+                              className="px-2 py-1 rounded-md text-[10px] font-medium border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                            >
+                              Online
+                            </button>
+                            <button
+                              onClick={() => onCollectPayment(apptId, 'offline')}
+                              className="px-2 py-1 rounded-md text-[10px] font-medium border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                            >
+                              Offline
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  )
+                })}
               </tbody>
             </table>
           )}
@@ -694,7 +748,7 @@ export default function ClinicDoctors() {
     }
   }
 
-const updateAvailability = async (id, availability) => {
+  const updateAvailability = async (id, availability) => {
   try {
     console.log('========== SAVE SCHEDULE ==========')
     console.log('Doctor ID:', id)
@@ -736,6 +790,30 @@ const updateAvailability = async (id, availability) => {
     )
   }
 }
+
+  const collectPayment = async (appointmentId, method) => {
+    try {
+      const response = await api.patch(`/clinic/appointments/${appointmentId}/payment`, {
+        method,
+      })
+      const updatedAppt = response.data.appointment || response.data
+      const docId = updatedAppt.doctorId || updatedAppt.doctor?._id || updatedAppt.doctor
+      setAppointments((prev) => {
+        if (!docId || !prev[docId]) return prev
+        return {
+          ...prev,
+          [docId]: prev[docId].map((a) =>
+            (a._id || a.id) === appointmentId ? updatedAppt : a
+          ),
+        }
+      })
+      toast.success(`Payment marked as ${method === 'online' ? 'Online' : 'Offline'}`)
+    } catch (error) {
+      console.error('Collect payment error:', error)
+      toast.error(error.response?.data?.message || error.message || 'Failed to record payment')
+    }
+  }
+
   const filtered = doctors.filter((d) => {
     const q = query.toLowerCase()
     const matchesQuery =
@@ -744,21 +822,6 @@ const updateAvailability = async (id, availability) => {
       statusFilter === 'all' || (statusFilter === 'active' ? d.active : !d.active)
     return matchesQuery && matchesStatus
   })
-
-  const todayStatsByDoctor = useMemo(() => {
-    const map = {}
-    doctors.forEach((d) => {
-      const doctorId = d._id || d.id
-      const todays = filterAppointments(appointments[doctorId] || [], 'day')
-      const { totalPatients, totalAmount } = summarize(todays)
-      map[doctorId] = {
-        bookedSlots: Math.min(totalPatients, d.totalSlots || 0),
-        patientsToday: totalPatients,
-        paymentsToday: totalAmount,
-      }
-    })
-    return map
-  }, [doctors, appointments])
 
   const reportDoctor = doctors.find((d) => (d._id || d.id) === reportDoctorId) || null
   const slotsDoctor = doctors.find((d) => (d._id || d.id) === slotsDoctorId) || null
@@ -832,12 +895,6 @@ const updateAvailability = async (id, availability) => {
             <AnimatePresence>
               {filtered.map((doc) => {
                 const doctorId = doc._id || doc.id
-                const stats = todayStatsByDoctor[doctorId] || {
-                  bookedSlots: 0,
-                  patientsToday: 0,
-                  paymentsToday: 0,
-                }
-                const available = (doc.totalSlots || 0) - stats.bookedSlots
                 const nextAvailable = getNextAvailableSession(doc.availability)
 
                 return (
@@ -882,25 +939,10 @@ const updateAvailability = async (id, availability) => {
                       </p>
                     </div>
 
-                    <div className="flex flex-wrap items-center gap-4 sm:gap-6 text-xs shrink-0">
-                      <div>
-                        <p className="text-gray-400">Today</p>
-                        <p className="font-semibold text-gray-800 dark:text-gray-100">
-                          {stats.bookedSlots}/{doc.totalSlots || 0}{' '}
-                          <span className="text-gray-400 font-normal">({available} open)</span>
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-gray-400">Patients</p>
-                        <p className="font-semibold text-gray-800 dark:text-gray-100">
-                          {stats.patientsToday}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-gray-400">Payments</p>
-                        <p className="font-semibold text-gray-800 dark:text-gray-100">
-                          {currency(stats.paymentsToday)}
-                        </p>
+                    <div className="flex items-center gap-3 shrink-0 text-xs">
+                      <div className="flex items-center gap-1 px-2.5 py-1 rounded-lg bg-gray-50 dark:bg-gray-800/60 text-gray-600 dark:text-gray-300 font-medium">
+                        <IndianRupee size={12} />
+                        {doc.fee || 0} / visit
                       </div>
                     </div>
 
@@ -917,7 +959,7 @@ const updateAvailability = async (id, availability) => {
                       </button>
                       <button
                         onClick={() => setReportDoctorId(doctorId)}
-                        title="View report"
+                        title="View payments & report"
                         className="w-8 h-8 rounded-lg flex items-center justify-center border border-gray-200 dark:border-gray-700 text-gray-500 hover:bg-gray-50 dark:hover:bg-gray-800"
                       >
                         <BarChart3 size={14} />
@@ -985,6 +1027,7 @@ const updateAvailability = async (id, availability) => {
           doctor={reportDoctor}
           records={appointments[reportDoctor._id || reportDoctor.id] || []}
           onClose={() => setReportDoctorId(null)}
+          onCollectPayment={collectPayment}
         />
       )}
     </ClinicDashboardLayout>

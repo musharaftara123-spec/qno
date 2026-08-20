@@ -1,12 +1,7 @@
 import React from 'react'
 import toast from 'react-hot-toast'
-import {
-  MessageSquare,
-  Phone,
-  Printer,
-  FileText,
-  Share2,
-} from 'lucide-react'
+import { MessageSquare, Phone, Printer } from 'lucide-react'
+import { printConsultationSlip } from '../../utils/consultationSlip.js'
 
 export default function PatientQuickActions({
   patientName = 'Patient',
@@ -16,11 +11,19 @@ export default function PatientQuickActions({
   doctorName = 'Doctor',
   doctorQualification = '',
   appointmentDate = '',
-  tokenNumber = '',
   patientId = '',
   size = 'sm',
+  // Clinic letterhead info for the slip — pass these down from
+  // clinicProfile (loaded via GET /clinic/profile) wherever this
+  // component is used.
+  clinicName = '',
+  clinicCategory = '',
+  clinicAddress = '',
+  clinicPhone = '',
+  clinicEmail = '',
+  validity = 1,
 }) {
-  const cleanPhone = patientPhone.replace(/\D/g, '')
+  const cleanPhone = (patientPhone || '').replace(/\D/g, '')
 
   const handleWhatsApp = () => {
     if (!cleanPhone) {
@@ -40,49 +43,27 @@ export default function PatientQuickActions({
     window.open(`tel:${cleanPhone}`, '_self')
   }
 
+  // Uses the shared prescription-pad style slip from utils/consultationSlip.js
+  // (same one used right after booking) instead of a separate inline
+  // template, so every "Print" button in the app produces the same slip.
   const handlePrintReceipt = () => {
-    const printWindow = window.open('', '_blank', 'width=600,height=700')
-    if (!printWindow) return toast.error('Please allow popups to print slip')
-
-    const slipContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <title>Appointment Slip - ${patientName}</title>
-          <style>
-            body { font-family: sans-serif; padding: 20px; line-height: 1.5; color: #111; }
-            .header { text-align: center; border-bottom: 2px dashed #ccc; padding-bottom: 12px; margin-bottom: 16px; }
-            .token { font-size: 32px; font-weight: bold; color: #2563eb; margin: 8px 0; }
-            .field { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 14px; }
-            .label { color: #666; }
-            .footer { text-align: center; margin-top: 24px; font-size: 11px; color: #888; border-top: 1px solid #eee; pt-12; }
-          </style>
-        </head>
-        <body>
-          <div class="header">
-            <h2>CLINIC APPOINTMENT SLIP</h2>
-            ${tokenNumber ? `<div class="token">TOKEN #${tokenNumber}</div>` : ''}
-          </div>
-          <div class="field"><span class="label">Patient Name:</span> <strong>${patientName}</strong></div>
-          <div class="field"><span class="label">Patient ID:</span> <span>${patientId || 'N/A'}</span></div>
-          <div class="field"><span class="label">Phone:</span> <span>${patientPhone || 'N/A'}</span></div>
-          <div class="field"><span class="label">Age / Gender:</span> <span>${patientAge || 'N/A'} yrs / ${patientGender || 'N/A'}</span></div>
-          <hr style="border: none; border-top: 1px solid #eee; margin: 12px 0;" />
-          <div class="field"><span class="label">Doctor:</span> <strong>${doctorName}</strong></div>
-          ${doctorQualification ? `<div class="field"><span class="label">Qualification:</span> <span>${doctorQualification}</span></div>` : ''}
-          <div class="field"><span class="label">Date:</span> <span>${appointmentDate || new Date().toLocaleDateString('en-GB')}</span></div>
-          <div class="footer">
-            <p>Please arrive 10 minutes prior to your session.</p>
-            <p>Thank you!</p>
-          </div>
-          <script>
-            window.onload = function() { window.print(); window.close(); }
-          </script>
-        </body>
-      </html>
-    `
-    printWindow.document.write(slipContent)
-    printWindow.document.close()
+    const printed = printConsultationSlip({
+      clinicName,
+      clinicCategory,
+      clinicAddress,
+      clinicPhone,
+      clinicEmail,
+      doctorName,
+      doctorQualification,
+      patientName,
+      patientAge,
+      patientGender,
+      appointmentDate,
+      validity,
+    })
+    if (!printed) {
+      toast.error('Please allow popups to print slip')
+    }
   }
 
   const isXs = size === 'xs'
@@ -114,7 +95,7 @@ export default function PatientQuickActions({
 
       <button
         type="button"
-        title="Print Appointment Slip"
+        title="Print Consultation Slip"
         onClick={handlePrintReceipt}
         className={`${btnClass} text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800`}
       >
