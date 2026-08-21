@@ -51,7 +51,17 @@ async function getState(doctorId, appointmentDate) {
   )
 }
 
-function calculateAverages(completed) {
+function calculateAverages(completed, queueStartedAt) {
+  // Wait time should reflect how long a patient actually stood in *today's*
+  // queue, not how far in advance they booked. An appointment can be booked
+  // days before the visit, so measuring from `createdAt` (booking time)
+  // massively inflates the average (this was the source of the ~267 min
+  // "Avg. Wait Time" bug). Instead, measure from whichever is later:
+  // the moment the doctor's queue actually started for the day, or the
+  // patient's booking time (for walk-ins/bookings made after the queue
+  // was already running).
+  const dayStart = queueStartedAt ? new Date(queueStartedAt).getTime() : null
+
   const timed = completed
     .filter((a) => a.queueStartedAt && a.queueCompletedAt)
     .map((a) => ({
@@ -67,7 +77,7 @@ function calculateAverages(completed) {
           ? Math.max(
               0,
               (new Date(a.queueStartedAt).getTime() -
-                new Date(a.createdAt).getTime()) /
+                Math.max(new Date(a.createdAt).getTime(), dayStart ?? 0)) /
                 60000
             )
           : null,
@@ -113,7 +123,7 @@ export async function getQueueForDoctor(doctorId, appointmentDate = todayString(
     doctor: doctorId,
     appointmentDate,
     status: { $in: ['confirmed', 'waiting', 'your_turn', 'completed', 'cancelled'] },
-  }).sort({ tokenNumber: 1 })
+  }).sort({ queueSequence: 1 })
 
   const current = appointments.find((a) => a.status === 'your_turn')
   const waitingList = appointments
@@ -137,7 +147,7 @@ export async function getQueueForDoctor(doctorId, appointmentDate = todayString(
     .filter((a) => a.status === 'completed')
     .sort((a, b) => new Date(a.queueCompletedAt || a.updatedAt) - new Date(b.queueCompletedAt || b.updatedAt))
 
-  const averages = calculateAverages(completed)
+  const averages = calculateAverages(completed, state.startedAt)
 
   return {
     doctorId: String(doctor._id),
@@ -211,7 +221,7 @@ export async function startQueue(doctorId, appointmentDate = todayString()) {
     doctor: doctorId,
     appointmentDate,
     status: { $in: ['confirmed', 'waiting'] },
-  }).sort({ tokenNumber: 1 })
+  }).sort({ queueSequence: 1 })
 
   if (firstPatient) {
     firstPatient.status = 'your_turn'
@@ -219,9 +229,11 @@ export async function startQueue(doctorId, appointmentDate = todayString()) {
     firstPatient.queueCompletedAt = null
     await firstPatient.save()
 
-    state.lastAction = 'next'
-    state.lastAppointmentId = firstPatient._id
-    state.previousCurrentAppointmentId = null
+    state.history.push({
+      type: 'next',
+      appointmentId: firstPatient._id,
+      previousCurrentAppointmentId: null,
+    })
   }
 
   await state.save()
@@ -245,7 +257,7 @@ export async function advanceQueue(doctorId, appointmentDate = todayString()) {
     doctor: doctorId,
     appointmentDate,
     status: { $in: ['confirmed', 'waiting'] },
-  }).sort({ tokenNumber: 1 })
+  }).sort({ queueSequence: 1 })
 
   if (!next) return null
 
@@ -254,9 +266,11 @@ export async function advanceQueue(doctorId, appointmentDate = todayString()) {
   next.queueCompletedAt = null
   await next.save()
 
-  state.lastAction = 'next'
-  state.lastAppointmentId = next._id
-  state.previousCurrentAppointmentId = current?._id || null
+  state.history.push({
+    type: 'next',
+    appointmentId: next._id,
+    previousCurrentAppointmentId: current?._id || null,
+  })
   await state.save()
 
   return next
@@ -272,12 +286,29 @@ export async function markNoShow(appointmentId) {
     throw new ApiError(400, 'Only a waiting patient can be skipped.')
   }
 
-  appt.status = 'cancelled'
+  // Skipping an absent patient should send them to the back of *today's*
+  // queue, not remove them from it. Only queueSequence (call order) moves;
+  // tokenNumber (the patient-facing identity) never changes, and status
+  // stays 'confirmed'/'waiting' so they're still counted as waiting and
+  // still get called once everyone ahead of them has gone.
+  const lastInLine = await Appointment.findOne({
+    _id: { $ne: appt._id },
+    doctor: appt.doctor,
+    appointmentDate: appt.appointmentDate,
+    status: { $in: ['confirmed', 'waiting', 'your_turn'] },
+  }).sort({ queueSequence: -1 })
+
+  const previousQueueSequence = appt.queueSequence
+  const backOfLine = (lastInLine?.queueSequence ?? appt.queueSequence) + 1
+
+  appt.queueSequence = backOfLine
   await appt.save()
 
-  state.lastAction = 'no_show'
-  state.lastAppointmentId = appt._id
-  state.previousCurrentAppointmentId = null
+  state.history.push({
+    type: 'no_show',
+    appointmentId: appt._id,
+    previousQueueSequence,
+  })
   await state.save()
   return appt
 }
@@ -302,17 +333,29 @@ export async function endQueue(doctorId, appointmentDate = todayString()) {
 
 export async function undoLastAction(doctorId, appointmentDate = todayString()) {
   const state = await getState(doctorId, appointmentDate)
-  if (!state.lastAction || !state.lastAppointmentId) throw new ApiError(400, 'Nothing to undo.')
-
-  if (state.lastAction === 'no_show') {
-    const appt = await Appointment.findById(state.lastAppointmentId)
-    if (!appt || appt.status !== 'cancelled') throw new ApiError(400, 'Nothing to undo.')
-    appt.status = 'confirmed'
-    await appt.save()
+  if (!state.history || state.history.length === 0) {
+    throw new ApiError(400, 'Nothing to undo.')
   }
 
-  if (state.lastAction === 'next') {
-    const promoted = await Appointment.findById(state.lastAppointmentId)
+  // Pop one step off the real history stack so Undo can be pressed
+  // repeatedly to walk back several Next/Skip actions in a row, instead
+  // of only ever being able to reverse a single remembered action
+  // (which previously left the queue in an inconsistent state — the
+  // appointment records and the UI would disagree after the 2nd/3rd
+  // consecutive undo).
+  const action = state.history[state.history.length - 1]
+  state.history.pop()
+
+  if (action.type === 'no_show') {
+    const appt = await Appointment.findById(action.appointmentId)
+    if (appt && action.previousQueueSequence !== null && action.previousQueueSequence !== undefined) {
+      appt.queueSequence = action.previousQueueSequence
+      await appt.save()
+    }
+  }
+
+  if (action.type === 'next') {
+    const promoted = await Appointment.findById(action.appointmentId)
     if (promoted && promoted.status === 'your_turn') {
       promoted.status = 'confirmed'
       promoted.queueStartedAt = null
@@ -320,8 +363,8 @@ export async function undoLastAction(doctorId, appointmentDate = todayString()) 
       await promoted.save()
     }
 
-    if (state.previousCurrentAppointmentId) {
-      const previous = await Appointment.findById(state.previousCurrentAppointmentId)
+    if (action.previousCurrentAppointmentId) {
+      const previous = await Appointment.findById(action.previousCurrentAppointmentId)
       if (previous && previous.status === 'completed') {
         previous.status = 'your_turn'
         previous.queueCompletedAt = null
@@ -330,9 +373,6 @@ export async function undoLastAction(doctorId, appointmentDate = todayString()) 
     }
   }
 
-  state.lastAction = null
-  state.lastAppointmentId = null
-  state.previousCurrentAppointmentId = null
   await state.save()
 
   return getQueueForDoctor(doctorId, appointmentDate)

@@ -458,6 +458,11 @@ export default function QueueManagement() {
 
     try {
       await api.post(`/clinic/queue/${selectedDoctorId}/no-show`, { appointmentId: queue.waitingList[0]?.appointmentId, date: selectedQueueDate })
+      // The skipped patient isn't removed — they're moved to the back of
+      // today's queue on the server. Re-sync so they reappear at the end
+      // of the waiting list instead of staying missing from the local
+      // optimistic update above.
+      await reloadQueue(selectedDoctorId, selectedQueueDate)
     } catch (error) {
       console.error('Failed to update queue skip on server:', error)
       toast.error('Server sync failed. Restoring queue...')
@@ -471,19 +476,36 @@ export default function QueueManagement() {
       return
     }
 
-    updateQueue((q) => {
-      const prevSnapshot = q.history[q.history.length - 1]
-      return {
-        ...q,
-        ...prevSnapshot,
-        history: q.history.slice(0, -1),
-      }
-    })
+    // Pop the local snapshot immediately so the button/UI feels instant...
+    updateQueue((q) => ({
+      ...q,
+      ...q.history[q.history.length - 1],
+      history: q.history.slice(0, -1),
+    }))
 
     try {
-      await api.post(`/clinic/queue/${selectedDoctorId}/undo`, { date: selectedQueueDate })
+      // ...but the server keeps its own full undo history stack, which is
+      // the source of truth. Always resync with its response rather than
+      // trusting the local snapshot alone — otherwise pressing Undo several
+      // times in a row can drift the UI out of sync with what the server
+      // actually reverted, which is what made the queue appear to "lose"
+      // the next patient after 2-3 consecutive undos.
+      const response = await api.post(`/clinic/queue/${selectedDoctorId}/undo`, { date: selectedQueueDate })
+      const data = response.data || {}
+      updateQueue((q) => ({
+        ...q,
+        currentToken: data.currentToken || q.currentToken,
+        waitingList: Array.isArray(data.waitingList) ? data.waitingList : q.waitingList,
+        waiting: Number(data.waiting) ?? q.waiting,
+        servedToday: Number(data.servedToday) ?? q.servedToday,
+        noShowToday: Number(data.noShowToday) ?? q.noShowToday,
+        avgWaitMin: Number.isFinite(Number(data.avgWaitMin)) ? Number(data.avgWaitMin) : q.avgWaitMin,
+        avgConsultationMin: Number.isFinite(Number(data.avgConsultationMin)) ? Number(data.avgConsultationMin) : q.avgConsultationMin,
+      }))
     } catch (error) {
       console.error('Failed to trigger undo on server:', error)
+      toast.error('Server sync failed. Reloading queue...')
+      await reloadQueue(selectedDoctorId, selectedQueueDate)
     }
   }
 

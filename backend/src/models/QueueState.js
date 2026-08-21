@@ -27,20 +27,40 @@ const queueStateSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
-    lastAction: {
-      type: String,
-      enum: ['next', 'no_show', null],
-      default: null,
-    },
-    lastAppointmentId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Appointment',
-      default: null,
-    },
-    previousCurrentAppointmentId: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'Appointment',
-      default: null,
+    // Full undo history (LIFO stack), not just the single last action.
+    // This lets the clinic press Undo repeatedly to walk back several
+    // Next/Skip actions in a row, matching the "press it multiple times
+    // to go back further" behaviour promised in the UI.
+    history: {
+      type: [
+        {
+          type: {
+            type: String,
+            enum: ['next', 'no_show'],
+            required: true,
+          },
+          appointmentId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Appointment',
+            default: null,
+          },
+          // For 'next': the appointment (if any) that was 'your_turn'
+          // before this action promoted a new patient.
+          previousCurrentAppointmentId: {
+            type: mongoose.Schema.Types.ObjectId,
+            ref: 'Appointment',
+            default: null,
+          },
+          // For 'no_show': the appointment's queueSequence before it was
+          // pushed to the back of the queue, so undo can restore its
+          // original position.
+          previousQueueSequence: {
+            type: Number,
+            default: null,
+          },
+        },
+      ],
+      default: [],
     },
   },
   { timestamps: true }
