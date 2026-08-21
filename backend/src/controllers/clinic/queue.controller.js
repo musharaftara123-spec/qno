@@ -2,32 +2,66 @@ import { asyncHandler } from '../../utils/asyncHandler.js'
 import * as queueService from '../../services/queue.service.js'
 import { getIO } from '../../sockets/queue.socket.js'
 
-// GET /api/clinic/queue/:doctorId?date=19 Aug 2026
+function emitQueueChanged(doctorId) {
+  getIO()?.to(`doctor:${doctorId}`).emit('queue:changed', { doctorId })
+}
+
 export const getQueue = asyncHandler(async (req, res) => {
-  const { doctorId } = req.params
-  const { date } = req.query
-  const queue = await queueService.getQueueForDoctor(doctorId, date)
+  const queue = await queueService.getQueueForDoctor(
+    req.params.doctorId,
+    req.query.date || undefined
+  )
   res.json(queue)
 })
 
-// POST /api/clinic/queue/:doctorId/next
-// Advances the token, then broadcasts to any patient watching this
-// doctor's queue in real time instead of them having to poll.
+export const startQueue = asyncHandler(async (req, res) => {
+  const state = await queueService.startQueue(
+    req.params.doctorId,
+    req.body?.date || req.query?.date
+  )
+  emitQueueChanged(req.params.doctorId)
+  res.json(state)
+})
+
 export const advanceQueue = asyncHandler(async (req, res) => {
-  const { doctorId } = req.params
-  const { date } = req.body
-  const next = await queueService.advanceQueue(doctorId, date)
-
-  getIO()?.to(`doctor:${doctorId}`).emit('token:advanced', {
-    doctorId,
-    currentToken: next?.tokenNumber ?? null,
-  })
-
+  const next = await queueService.advanceQueue(
+    req.params.doctorId,
+    req.body?.date || req.query?.date
+  )
+  emitQueueChanged(req.params.doctorId)
   res.json(next)
 })
 
-// POST /api/clinic/queue/:doctorId/no-show
 export const noShow = asyncHandler(async (req, res) => {
   const appointment = await queueService.markNoShow(req.body.appointmentId)
+  emitQueueChanged(String(appointment.doctor))
   res.json(appointment)
+})
+
+export const toggleHold = asyncHandler(async (req, res) => {
+  const state = await queueService.toggleHold(
+    req.params.doctorId,
+    req.body?.date || req.query?.date,
+    req.body?.isHeld
+  )
+  emitQueueChanged(req.params.doctorId)
+  res.json(state)
+})
+
+export const endQueue = asyncHandler(async (req, res) => {
+  const state = await queueService.endQueue(
+    req.params.doctorId,
+    req.body?.date || req.query?.date
+  )
+  emitQueueChanged(req.params.doctorId)
+  res.json(state)
+})
+
+export const undoQueue = asyncHandler(async (req, res) => {
+  const queue = await queueService.undoLastAction(
+    req.params.doctorId,
+    req.body?.date || req.query?.date
+  )
+  emitQueueChanged(req.params.doctorId)
+  res.json(queue)
 })

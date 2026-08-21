@@ -265,13 +265,12 @@ function DoctorFormModal({ mode = 'add', initial, onClose, onSubmit }) {
   )
 }
 
-function DoctorReportDrawer({ doctor, records = [], onClose, onCollectPayment }) {
+function DoctorReportDrawer({ doctor, records = [], onClose }) {
   const [range, setRange] = useState('day')
   if (!doctor) return null
 
   const filtered = filterAppointments(records, range)
-  const { totalPatients, totalAmount, clinicCount, onlineCount, collectedAmount, pendingAmount } =
-    summarize(filtered)
+  const { totalPatients, totalAmount, collectedAmount, pendingAmount } = summarize(filtered)
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
@@ -337,82 +336,17 @@ function DoctorReportDrawer({ doctor, records = [], onClose, onCollectPayment })
           </div>
         </div>
 
-        <div className="flex items-center gap-3 mb-3 text-[11px] text-gray-400">
-          <span>Clinic (walk-in): {clinicCount}</span>
-          <span>·</span>
-          <span>Online: {onlineCount}</span>
-        </div>
-
-        <div className="overflow-y-auto flex-1 -mx-1 px-1">
+        <div className="flex-1 flex flex-col items-center justify-center text-center py-6">
           {filtered.length === 0 ? (
-            <p className="text-center text-xs text-gray-400 py-10">No appointments in this range.</p>
+            <p className="text-xs text-gray-400">No appointments in this range.</p>
           ) : (
-            <table className="w-full text-xs">
-              <thead className="sticky top-0 bg-white dark:bg-gray-900">
-                <tr className="text-left text-gray-400 border-b border-gray-100 dark:border-gray-800">
-                  <th className="py-2 pr-2 font-medium">Date</th>
-                  <th className="py-2 pr-2 font-medium">Patient</th>
-                  <th className="py-2 pr-2 font-medium">Source</th>
-                  <th className="py-2 pr-2 font-medium text-right">Fee</th>
-                  <th className="py-2 pr-2 font-medium text-right">Payment</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filtered.map((r) => {
-                  const apptId = r._id || r.id
-                  return (
-                    <tr key={apptId} className="border-b border-gray-50 dark:border-gray-800/60">
-                      <td className="py-2 pr-2 text-gray-600 dark:text-gray-300 whitespace-nowrap">
-                        {r.createdAt ? new Date(r.createdAt).toLocaleDateString('en-IN') : r.appointmentDate}
-                      </td>
-                      <td className="py-2 pr-2 text-gray-900 dark:text-white">{r.patientName}</td>
-                      <td className="py-2 pr-2">
-                        <span
-                          className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${
-                            r.bookedBy === 'receptionist'
-                              ? 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
-                              : 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400'
-                          }`}
-                        >
-                          {r.bookedBy === 'receptionist' ? 'Clinic' : 'Online'}
-                        </span>
-                      </td>
-                      <td className="py-2 pr-2 text-right text-gray-900 dark:text-white font-medium whitespace-nowrap">
-                        {currency(r.fee)}
-                      </td>
-                      <td className="py-2 pr-2 text-right">
-                        {r.paymentMethod ? (
-                          <span
-                            className={`text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${
-                              r.paymentMethod === 'online'
-                                ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400'
-                                : 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
-                            }`}
-                          >
-                            Paid · {r.paymentMethod === 'online' ? 'Online' : 'Offline'}
-                          </span>
-                        ) : (
-                          <div className="flex items-center justify-end gap-1">
-                            <button
-                              onClick={() => onCollectPayment(apptId, 'online')}
-                              className="px-2 py-1 rounded-md text-[10px] font-medium border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
-                            >
-                              Online
-                            </button>
-                            <button
-                              onClick={() => onCollectPayment(apptId, 'offline')}
-                              className="px-2 py-1 rounded-md text-[10px] font-medium border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
-                            >
-                              Offline
-                            </button>
-                          </div>
-                        )}
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
+            <>
+              <FileDown size={22} className="text-gray-300 dark:text-gray-600 mb-2" />
+              <p className="text-xs text-gray-400 max-w-xs">
+                Patient-wise details (name, booking source, and payment method for each
+                appointment) are available in the exported PDF report above.
+              </p>
+            </>
           )}
         </div>
       </motion.div>
@@ -791,29 +725,6 @@ export default function ClinicDoctors() {
   }
 }
 
-  const collectPayment = async (appointmentId, method) => {
-    try {
-      const response = await api.patch(`/clinic/appointments/${appointmentId}/payment`, {
-        method,
-      })
-      const updatedAppt = response.data.appointment || response.data
-      const docId = updatedAppt.doctorId || updatedAppt.doctor?._id || updatedAppt.doctor
-      setAppointments((prev) => {
-        if (!docId || !prev[docId]) return prev
-        return {
-          ...prev,
-          [docId]: prev[docId].map((a) =>
-            (a._id || a.id) === appointmentId ? updatedAppt : a
-          ),
-        }
-      })
-      toast.success(`Payment marked as ${method === 'online' ? 'Online' : 'Offline'}`)
-    } catch (error) {
-      console.error('Collect payment error:', error)
-      toast.error(error.response?.data?.message || error.message || 'Failed to record payment')
-    }
-  }
-
   const filtered = doctors.filter((d) => {
     const q = query.toLowerCase()
     const matchesQuery =
@@ -1027,7 +938,6 @@ export default function ClinicDoctors() {
           doctor={reportDoctor}
           records={appointments[reportDoctor._id || reportDoctor.id] || []}
           onClose={() => setReportDoctorId(null)}
-          onCollectPayment={collectPayment}
         />
       )}
     </ClinicDashboardLayout>

@@ -13,6 +13,7 @@ import {
   Copy,
   CheckCircle2,
   Loader2,
+  IndianRupee,
 } from 'lucide-react'
 import ClinicDashboardLayout from '../../components/clinic/ClinicDashboardLayout.jsx'
 import PatientQuickActions from '../../components/clinic/PatientQuickActions.jsx'
@@ -61,7 +62,7 @@ export default function Appointments() {
   const [age, setAge] = useState('')
   const [gender, setGender] = useState('')
   const [doctorId, setDoctorId] = useState('')
-  const [selectedSession, setSelectedSession] = useState(null)
+  const [selectedSessionIndex, setSelectedSessionIndex] = useState(null)
   const [selectedDateIdx, setSelectedDateIdx] = useState(0)
   const [submitting, setSubmitting] = useState(false)
   const [lastBooked, setLastBooked] = useState(null)
@@ -148,6 +149,12 @@ export default function Appointments() {
 
   const sessions = selectedDoctor?.availability || []
 
+  // Derived from the index, not compared by value — this is what fixes
+  // the bug where two sessions sharing the same day/start (e.g. duplicate
+  // or incomplete entries) would both light up as "selected".
+  const selectedSession =
+    selectedSessionIndex != null ? sessions[selectedSessionIndex] || null : null
+
   const upcomingDates = useMemo(
     () => (selectedSession ? getUpcomingDatesForDay(selectedSession.day, 4) : []),
     [selectedSession]
@@ -156,13 +163,13 @@ export default function Appointments() {
 
   const handleDoctorChange = (id) => {
     setDoctorId(id)
-    setSelectedSession(null)
+    setSelectedSessionIndex(null)
     setSelectedDateIdx(0)
   }
 
-  const handleSessionSelect = (session) => {
+  const handleSessionSelect = (index) => {
     if (isDoctorOnLeave) return
-    setSelectedSession(session)
+    setSelectedSessionIndex(index)
     setSelectedDateIdx(0)
   }
 
@@ -254,7 +261,7 @@ export default function Appointments() {
       setPhone('')
       setAge('')
       setGender('')
-      setSelectedSession(null)
+      setSelectedSessionIndex(null)
       setSelectedDateIdx(0)
     } catch (error) {
       console.error('Booking error:', error)
@@ -279,6 +286,29 @@ export default function Appointments() {
       toast.success('Link copied')
     } catch {
       toast.error('Failed to copy link')
+    }
+  }
+
+  // Records payment (online/offline) for an appointment straight from the
+  // Recent Appointments list, so the receptionist doesn't need to jump
+  // into the doctor's report just to mark a fee as collected.
+  const collectPayment = async (appointmentId, method) => {
+    try {
+      const { data } = await api.patch(`/clinic/appointments/${appointmentId}/payment`, {
+        method,
+      })
+      const updatedAppt = data.appointment || data
+      setRecent((prev) =>
+        prev.map((a) =>
+          (a.appointmentId || a._id) === appointmentId
+            ? { ...a, ...updatedAppt }
+            : a
+        )
+      )
+      toast.success(`Payment marked as ${method === 'online' ? 'Online' : 'Offline'}`)
+    } catch (error) {
+      console.error('Collect payment error:', error)
+      toast.error(error.response?.data?.message || error.message || 'Failed to record payment')
     }
   }
 
@@ -391,6 +421,12 @@ export default function Appointments() {
                   )}
                 </select>
               </div>
+              {selectedDoctor && selectedDoctor.fee != null && (
+                <p className="mt-1.5 flex items-center gap-1 text-xs text-gray-500 dark:text-gray-400">
+                  <IndianRupee size={11} />
+                  Consultation fee: {selectedDoctor.fee} / visit
+                </p>
+              )}
             </Field>
           </div>
 
@@ -415,13 +451,12 @@ export default function Appointments() {
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
                 {sessions.map((session, index) => {
-                  const isSelected =
-                    selectedSession?.day === session.day && selectedSession?.start === session.start
+                  const isSelected = selectedSessionIndex === index
 
                   return (
                     <div
                       key={`${session.day}-${index}`}
-                      onClick={() => handleSessionSelect(session)}
+                      onClick={() => handleSessionSelect(index)}
                       className={`cursor-pointer rounded-2xl border p-3.5 transition-all ${
                         isSelected
                           ? 'bg-brand-50/60 dark:bg-brand-900/30 border-brand-500 dark:border-brand-600 ring-2 ring-brand-500/20'
@@ -555,8 +590,8 @@ export default function Appointments() {
           )}
         </div>
 
-        <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5">
-          <p className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3">
+        <div className="rounded-2xl bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 shadow-soft p-5 flex flex-col max-h-[75vh] lg:sticky lg:top-4">
+          <p className="text-sm font-semibold text-gray-800 dark:text-gray-100 mb-3 shrink-0">
             Recent Appointments
           </p>
           {loadingRecent ? (
@@ -569,7 +604,7 @@ export default function Appointments() {
               Appointments you book here will appear in this list.
             </p>
           ) : (
-            <div className="space-y-3">
+            <div className="space-y-3 overflow-y-auto pr-1 -mr-1 flex-1 min-h-0">
               {recent.map((appt) => {
                 const doctor = doctors.find((d) => String(d._id) === String(appt.doctorId))
                 return (
@@ -595,6 +630,46 @@ export default function Appointments() {
                           {appt.doctorName} · {appt.appointmentDay} · Token #{appt.tokenNumber}
                         </p>
                       </div>
+                      {appt.fee != null && (
+                        <div className="shrink-0 text-right">
+                          <p className="flex items-center justify-end gap-0.5 text-xs font-medium text-gray-700 dark:text-gray-200">
+                            <IndianRupee size={11} />
+                            {appt.fee}
+                          </p>
+                          {appt.paymentMethod ? (
+                            <span
+                              className={`inline-block mt-0.5 text-[10px] font-semibold px-2 py-0.5 rounded-full whitespace-nowrap ${
+                                appt.paymentMethod === 'online'
+                                  ? 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                                  : 'bg-teal-50 text-teal-700 dark:bg-teal-900/30 dark:text-teal-400'
+                              }`}
+                            >
+                              Paid · {appt.paymentMethod === 'online' ? 'Online' : 'Offline'}
+                            </span>
+                          ) : (
+                            <div className="flex items-center justify-end gap-1 mt-1">
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  collectPayment(appt.appointmentId || appt._id, 'online')
+                                }
+                                className="px-2 py-0.5 rounded-md text-[10px] font-medium border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                              >
+                                Online
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  collectPayment(appt.appointmentId || appt._id, 'offline')
+                                }
+                                className="px-2 py-0.5 rounded-md text-[10px] font-medium border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800"
+                              >
+                                Offline
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                     <div className="pl-12">
                       <PatientQuickActions
